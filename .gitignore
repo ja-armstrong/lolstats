@@ -1,0 +1,12 @@
+# secrets — NEVER commit
+.env
+
+# data (regenerable via collect_matches.py; contains player PUUIDs)
+data/
+
+# python
+__pycache__/
+*.pyc
+
+# scratch
+sanity_check*.py
