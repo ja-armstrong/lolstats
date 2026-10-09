@@ -16,11 +16,16 @@ estimands (see `analyze_rigor.py`):
    of ALL four roles** (0.667; deltas vs TOP -0.112, MID -0.121, BOT -0.077,
    SUP -0.073, every 95% CI excludes 0) — including in 32min+ close games.
    The lead is stable across 23 patches and robust to champion controls.
-3. **Performance relative to your own teammates -> win** (Model C):
-   **Support leads decisively** (0.877; delta vs jungle +0.150, CI
-   [+0.136,+0.165]), stable in close games (0.766). Full ranking, all
-   significant: SUPPORT > BOTTOM (+0.080) > TOP (+0.039) > JUNGLE > MIDDLE
-   (-0.023, the least individually-differential role).
+3. **Performance relative to your own teammates -> win** (Model C,
+   corrected): Only two roles carry real within-team differential signal:
+   **Support 0.690 and Jungle 0.675 — statistically tied** (delta +0.015,
+   CI [-0.004,+0.035]). All others are significantly below jungle
+   (Top -0.078, Bottom -0.097, Mid -0.110). Same story in close games.
+   (An earlier version of Model C that also residualized the five share
+   metrics reported "Support 0.877, decisive" — that was an artifact: for
+   share metrics the residual is provably an affine transform of the own
+   value with zero teammate information, letting the model reconstruct team
+   totals. See `check_modelc_degeneracy.py`.)
 
 **Across the ladder** (`analyze_ladder.py`, ~1,200 matches per rank band):
 Jungle is the best role in **every** band from Iron to Apex (0.63-0.69 AUC)
@@ -60,7 +65,7 @@ ranking is identical across all model classes.
 | Assumption | Check | Verdict |
 |---|---|---|
 | End-of-game stats re-encode the win (stomps) | Stratify by game length | Confirmed: Model A drops 0.93->0.79 in 32min+ games; role differences vanish. Headline claims must use share/residual models or close games. |
-| Raw stats measure the player vs their team | Model C (team-residualized features) | Raw-level AUC is mostly team-shared signal; the *differential* signal is real but smaller, and largest for support. |
+| Raw stats measure the player vs their team | Model C corrected (non-degenerate residuals only) | Share-residual degeneracy found and fixed (res(share) is an affine transform of own value). Clean differential signal is far smaller than first estimated; Jungle and Support tie at the top, all other roles significantly below. |
 | Share features are "clean" team-relative measures | Shares-only vs shares+levels | Mixing shares with levels lets a model reconstruct team totals (gold ~ share x team gold) and inflate AUC to 0.98 — documented; never mix without acknowledging. |
 | Rows are independent | Player-clustered bootstrap | 1.2 rows/player on average; CIs barely widen. Snowballing did not concentrate the sample. |
 | No uncertainty reported | Match-clustered bootstrap, paired delta-AUC CIs | Jungle's Model B lead is significant vs TOP/MID/BOT; not vs SUPPORT. Model A role differences are NOT significant in close games. |

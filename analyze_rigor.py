@@ -92,7 +92,13 @@ def fit_auc(df_tr_role, df_te_role, feat_cols, use_champion=False):
 VARIANTS = {
     "A_raw_levels": LEVEL,
     "B_team_shares": SHARES,
-    "C_team_residual": [c + "_res" for c in LEVEL + SHARES],
+    # Model C corrected: residualize only NON-degenerate features.
+    # For the 5 share metrics (sum to 1 across a team), res(share) =
+    # (5*share_own - 1)/4 exactly — an affine transform of own value with
+    # zero teammate information — and paired with level residuals they let
+    # the model reconstruct team totals. kp is NOT degenerate (kills+assists
+    # don't sum to a constant), so it keeps a true residual.
+    "C_team_residual": ["kda", "kp", "csm", "gpm", "dpm", "vspm", "wpm", "dthpm", "skpm"],
 }
 
 
@@ -118,7 +124,8 @@ def main():
         rows = []
         per_boot = {}
         for vname, cols in VARIANTS.items():
-            fc = [c + "_zt" for c in cols] if vname != "C_team_residual" else cols
+            fc = [c + "_zt" for c in cols] if vname != "C_team_residual" \
+                else [c + "_res" for c in cols]
             for role in ROLES:
                 r_tr, r_te = tr[tr["role"] == role], te[te["role"] == role]
                 auc, model = fit_auc(r_tr, r_te, fc)
