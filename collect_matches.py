@@ -211,18 +211,21 @@ def main():
             match_id, tier = b["frontier"].pop(0)
             if match_id in state["done"]:
                 continue
-            raw = api.match(match_id)
-            state["done"].append(match_id)
-
-            if raw is not None:
-                slim = slim_match(raw, tier)
-                if slim and slim.get("queueId") == QUEUE and not slim.get("gameEndedInEarlySurrender"):
-                    with RAW_FILE.open("a", encoding="utf-8") as f:
-                        f.write(json.dumps(slim) + "\n")
-                    state["matches_written"] += 1
-                    b["collected"] += 1
-                    new_matches += 1
-                    snowball(state, slim)
+            try:
+                raw = api.match(match_id)
+                if raw is not None:
+                    slim = slim_match(raw, tier)
+                    if slim and slim.get("queueId") == QUEUE and not slim.get("gameEndedInEarlySurrender"):
+                        with RAW_FILE.open("a", encoding="utf-8") as f:
+                            f.write(json.dumps(slim) + "\n")
+                        state["matches_written"] += 1
+                        b["collected"] += 1
+                        new_matches += 1
+                        snowball(state, slim)
+            except Exception as e:
+                print(f"[collect] skipping {match_id}: {type(e).__name__}: {e}")
+            finally:
+                state["done"].append(match_id)
 
             if new_matches and new_matches % CHECKPOINT_EVERY == 0:
                 save_state(state)
