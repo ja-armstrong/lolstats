@@ -5,23 +5,23 @@ Build a normalized performance score for each role, see how accurately it
 predicts that player's win rate, and rank roles by predictive power. The role
 whose performance best predicts winning is judged the most impactful.
 
-## Answer (current, audit-aware)
-"Impact" depends on which question you ask — the project now separates three
+## Answer (current, audit-aware, 5,326 matches)
+"Impact" depends on which question you ask — the project separates three
 estimands (see `analyze_rigor.py`):
 
-1. **Raw performance -> win** (Model A): Jungle leads (0.946 vs 0.91-0.93),
-   but this collapses in close games (all roles ~0.78-0.81, no significant
-   differences) — most of the raw signal is team dominance re-read through
-   end-of-game stats.
-2. **Share of team output -> win** (Model B): Jungle is the only role whose
-   lead is significant vs most others (0.647; vs TOP -0.083, MID -0.102,
-   BOT -0.073, all CIs exclude 0), and it holds in close games. This is the
-   strongest evidence for jungle as the "controlling" role.
+1. **Raw performance -> win** (Model A): Jungle leads (0.937 vs 0.92-0.93),
+   but the raw signal is largely team dominance re-read through end-of-game
+   stats — in 32min+ close games all roles compress to 0.80-0.84.
+2. **Share of team output -> win** (Model B): **Jungle is significantly ahead
+   of ALL four roles** (0.660; deltas vs TOP -0.100, MID -0.106, BOT -0.084,
+   SUP -0.067, every 95% CI excludes 0) and stays ahead in close games. This
+   is the strongest evidence for jungle as the "controlling" role. The lead is
+   stable across patches and robust to champion controls.
 3. **Performance relative to your own teammates -> win** (Model C):
-   **Support leads decisively** (0.853; delta vs jungle +0.136, CI
-   [+0.10,+0.17]), and remains highest in close games (0.712). Supports look
-   weak in raw stats but their differential performance is the most
-   win-predictive in the game.
+   **Support leads decisively** (0.871; delta vs jungle +0.134, CI
+   [+0.117,+0.156]), stable in close games (0.759) and across every patch
+   sampled. Bottom/ADC is second (+0.069). Supports look weak in raw stats
+   but their differential performance is the most win-predictive in the game.
 
 ## Data
 - Source: Riot Games API, ranked solo queue (queue 420), NA ladder
