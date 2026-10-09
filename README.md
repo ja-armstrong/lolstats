@@ -5,36 +5,33 @@ Build a normalized performance score for each role, see how accurately it
 predicts that player's win rate, and rank roles by predictive power. The role
 whose performance best predicts winning is judged the most impactful.
 
-## Answer (current, audit-aware, 8,340 matches)
+## Answer (final, audit-aware, ~9,600 matches)
 "Impact" depends on which question you ask — the project separates three
 estimands (see `analyze_rigor.py`):
 
-1. **Raw performance -> win** (Model A): Jungle leads (0.928 vs 0.90-0.92),
+1. **Raw performance -> win** (Model A): Jungle leads (0.938 vs 0.91-0.92),
    but the raw signal is largely team dominance re-read through end-of-game
-   stats — in 32min+ close games all roles compress to 0.80-0.84.
+   stats — in 32min+ close games all roles compress to 0.81-0.84.
 2. **Share of team output -> win** (Model B): **Jungle is significantly ahead
-   of ALL four roles** (0.661; deltas vs TOP -0.108, MID -0.126, BOT -0.072,
-   SUP -0.069, every 95% CI excludes 0) — including in 32min+ close games,
-   where the previously ambiguous jungle-vs-bottom comparison resolved
-   (-0.050, CI [-0.088,-0.011]). The lead is stable across 21 patches and
-   robust to champion controls.
+   of ALL four roles** (0.667; deltas vs TOP -0.112, MID -0.121, BOT -0.077,
+   SUP -0.073, every 95% CI excludes 0) — including in 32min+ close games.
+   The lead is stable across 23 patches and robust to champion controls.
 3. **Performance relative to your own teammates -> win** (Model C):
-   **Support leads decisively** (0.871; delta vs jungle +0.145, CI
-   [+0.129,+0.161]), stable in close games (0.774) and across every patch
-   sampled. Bottom/ADC is second (+0.085), and TOP is now also significantly
-   above jungle (+0.030). Mid is the least individually-differential role.
+   **Support leads decisively** (0.877; delta vs jungle +0.150, CI
+   [+0.136,+0.165]), stable in close games (0.766). Full ranking, all
+   significant: SUPPORT > BOTTOM (+0.080) > TOP (+0.039) > JUNGLE > MIDDLE
+   (-0.023, the least individually-differential role).
 
-**Across the ladder** (`analyze_ladder.py`, ~1,050 matches per rank band):
+**Across the ladder** (`analyze_ladder.py`, ~1,200 matches per rank band):
 Jungle is the best role in **every** band from Iron to Apex (0.63-0.69 AUC)
-with Support consistently second. The earlier "inflection points" (bottom in
-bronze/silver, mid in gold) were small-sample noise — with proper sample
-sizes there are none.
+with Support/Bottom as runners-up. There are no rank "inflection points" —
+the earlier small-sample crossovers were noise.
 
-**Model benchmark note:** at 8.3k matches the MLP neural net now slightly
-outperforms logistic regression (0.921-0.931 vs 0.905-0.928 test AUC),
-answering the original "shouldn't this be a neural net?" question: with
-enough data the NN ekes out a small edge, but the ranking of roles is
-identical across all model classes.
+**Model benchmark:** at ~10k matches the MLP neural net and gradient
+boosting slightly outperform logistic regression (MLP 0.925-0.948 vs LR
+0.908-0.938 test AUC), answering the original "shouldn't this be a neural
+net?" question: with enough data the NN ekes out a small edge, but the role
+ranking is identical across all model classes.
 
 ## Data
 - Source: Riot Games API, ranked solo queue (queue 420), NA ladder
