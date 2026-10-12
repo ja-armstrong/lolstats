@@ -1,15 +1,19 @@
 """
 Turn raw collected matches into a per-player-game table with normalized metrics.
 
-Outputs: data/processed/player_games.parquet
-
 Normalization is the core idea:
 - Raw stats are not comparable across roles (junglers farm differently than
   ADCs) or across ranks (Diamond games have higher CS/min than Bronze).
 - So every metric is z-scored within (role) AND within (role x tier).
 - The normalized score for a player is comparable across the whole dataset.
+
+Usage:
+    python prepare_features.py                       # ladder (matches.jsonl)
+    python prepare_features.py --input data/raw/pro_matches.jsonl \
+        --output data/processed/player_games_pro.parquet --no-queue-filter
 """
 
+import argparse
 import json
 from pathlib import Path
 
@@ -30,12 +34,12 @@ ROLE_MAP = {  # standardize teamPosition labels
 }
 
 
-def load_matches() -> pd.DataFrame:
+def load_matches(raw_file: Path = RAW_FILE, queue_filter: bool = True) -> pd.DataFrame:
     rows = []
-    with RAW_FILE.open(encoding="utf-8") as f:
+    with raw_file.open(encoding="utf-8") as f:
         for line in f:
             m = json.loads(line)
-            if m.get("queueId") != 420:
+            if queue_filter and m.get("queueId") != 420:
                 continue
             dur = m.get("gameDuration") or 0
             if dur < MIN_DURATION_S:
@@ -62,7 +66,7 @@ def load_matches() -> pd.DataFrame:
                 if role is None:
                     continue
                 k, d, a = (p.get("kills") or 0), (p.get("deaths") or 0), (p.get("assists") or 0)
-                cs = (p.get("totalMinionsKilled") or 0) + (p.get("neutralMinionsKilled") or 0)
+                cs = _cs(p)
                 gold = p.get("goldEarned") or 0
                 dmg = p.get("totalDamageDealtToChampions") or 0
                 tk, td = team_kills.get(p.get("teamId"), 1), team_dmg.get(p.get("teamId"), 1)
@@ -74,7 +78,13 @@ def load_matches() -> pd.DataFrame:
                     "matchId": m["matchId"],
                     "puuid": p.get("puuid"),
                     "teamId": p.get("teamId"),
+                    "teamName": p.get("teamName"),
+                    "playerName": p.get("playerName"),
                     "tier": m.get("seedTier"),
+                    "league": m.get("league") or ("LADDER" if queue_filter else m.get("seedTier")),
+                    "split": m.get("split"),
+                    "playoffs": bool(m.get("playoffs") or False),
+                    "ts": m.get("gameStartTimestamp") or 0,
                     "role": role,
                     "champion": p.get("championName"),
                     "win": bool(p.get("win")),
@@ -100,11 +110,20 @@ def load_matches() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _cs(p: dict) -> float:
+    """Total CS; pro records carry a precomputed csTotal, ladder sums the parts."""
+    if p.get("csTotal") is not None:
+        return p["csTotal"]
+    return (p.get("totalMinionsKilled") or 0) + (p.get("neutralMinionsKilled") or 0)
+
+
 def zscore_group(df: pd.DataFrame, cols: list[str], group: list[str], suffix: str) -> pd.DataFrame:
     g = df.groupby(group, observed=True)[cols]
     mu = g.transform("mean")
     sd = g.transform("std")
     out = (df[cols] - mu) / sd.replace(0, np.nan)
+    # constant-within-group metric (e.g. soloKills absent in a source) -> neutral 0
+    out = out.fillna(0.0) if out.isna().any().any() else out
     return df.join(out.add_suffix(suffix))
 
 
@@ -116,7 +135,14 @@ SHARES = ["gold_share", "dmg_share", "kp", "cs_share", "vision_share", "death_sh
 
 
 def main():
-    df = load_matches()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input", type=Path, default=RAW_FILE)
+    ap.add_argument("--output", type=Path, default=OUT_FILE)
+    ap.add_argument("--no-queue-filter", action="store_true",
+                    help="keep games with queueId=None (pro track)")
+    args = ap.parse_args()
+
+    df = load_matches(args.input, queue_filter=not args.no_queue_filter)
     if df.empty:
         print("No usable matches found. Run collect_matches.py first.")
         return
@@ -138,8 +164,8 @@ def main():
     df["score_zt"] = df[z_cols].mean(axis=1)
     df["score_z"] = df[[c + "_z" for c in METRICS]].mean(axis=1)
 
-    df.to_parquet(OUT_FILE, index=False)
-    print(f"Wrote {OUT_FILE}")
+    df.to_parquet(args.output, index=False)
+    print(f"Wrote {args.output}")
     print("\nRows per role x tier (sample):")
     print(df.groupby(["role", "tier"], observed=True).size().unstack(fill_value=0).to_string())
 

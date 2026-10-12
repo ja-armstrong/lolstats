@@ -44,7 +44,14 @@ SEED = 42
 
 
 def main():
-    df = pd.read_parquet(IN_FILE)
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input", type=Path, default=IN_FILE)
+    ap.add_argument("--tag", default="", help="suffix for output filenames (e.g. _pro)")
+    args = ap.parse_args()
+    tag = args.tag
+
+    df = pd.read_parquet(args.input)
     df = df[df["role"].isin(ROLES)].copy()
     print(f"Share-based analysis: {len(df):,} player-games "
           f"({df['matchId'].nunique():,} matches)\n")
@@ -85,13 +92,13 @@ def main():
             print(f"   {c:13s} win={w_mean:.3f}  loss={l_mean:.3f}  diff={w_mean - l_mean:+.3f}")
 
     res = pd.DataFrame(rows).set_index("role").sort_values("test_auc", ascending=False)
-    res.to_csv(OUT_DIR / "share_auc_table.csv")
-    res.round(4).to_markdown(OUT_DIR / "share_auc_table.md")
+    res.to_csv(OUT_DIR / f"share_auc_table{tag}.csv")
+    res.round(4).to_markdown(OUT_DIR / f"share_auc_table{tag}.md")
 
     coefs = pd.DataFrame(coef_rows).pivot(index="metric", columns="role", values="coef")
     coefs = coefs[ROLES]
     coefs.index.name = "metric"
-    coefs.to_csv(OUT_DIR / "share_coefficients.csv")
+    coefs.to_csv(OUT_DIR / f"share_coefficients{tag}.csv")
 
     print("\n=== Share-model test AUC by role (higher = bigger slice of team output predicts win) ===")
     print(res.round(4).to_string())
@@ -107,7 +114,7 @@ def main():
     ax.set_ylim(0.4, max(0.7, res["test_auc"].max() + 0.02))
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "share_auc.png", dpi=150)
+    fig.savefig(OUT_DIR / f"share_auc{tag}.png", dpi=150)
 
     fig, ax = plt.subplots(figsize=(8, 5))
     for role, cal in curves.items():
@@ -118,7 +125,7 @@ def main():
     ax.legend()
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "share_calibration.png", dpi=150)
+    fig.savefig(OUT_DIR / f"share_calibration{tag}.png", dpi=150)
 
     print(f"\nSaved results to {OUT_DIR}")
 

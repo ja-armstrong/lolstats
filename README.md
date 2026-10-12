@@ -46,6 +46,54 @@ ranking is identical across all model classes.
   proxy for the match's rank band)
 - Raw storage: `data/raw/matches.jsonl` (one compact JSON per match)
 
+### Pro-play track (tier 1)
+- Source: Oracle's Elixir public match CSVs (community-aggregated pro box
+  scores, updated daily), 2025-2026
+- Tier 1 filter: LCK, LPL, LEC, LCS, LCP + internationals (Worlds, MSI,
+  First Stand, EWC); academy/regional leagues excluded
+- `collect_pro.py` converts OE rows into the same record schema as the ladder
+  track (`data/raw/pro_matches.jsonl`), with `seedTier` = league name so the
+  role x tier normalization becomes role x league
+- OE's `datacompleteness` flag is ignored (all LPL 2025 games are marked
+  "partial" while every core stat is present); instead rows missing any core
+  field are dropped, and games that lose rows to that are dropped whole
+- Player identity = OE `playerid` (stable string ids), team = `teamname`
+- Feature building reuses `prepare_features.py` via `--input/--output/
+  --no-queue-filter`; analyses take `--input/--tag` to run on the pro parquet
+- `analyze_players_pro.py` — player-level: outperformance vs own teammates,
+  carry rate, swing, with/without team win rate, champion pool (tier-1 only).
+  Players are split into per-team STINTS (team change or >=60-day gap), so
+  mid-season moves are scored per spell
+- `analyze_worlds_primer.py` — ranks the official Worlds 2026 rosters (95
+  rostered players) by a watch score (team-stint outperform/carry/swing/AUC/
+  level percentiles); excludes subs and replaced players; outputs
+  `results/worlds_primer_2026.md`
+- Known pro-specific caveats: fixed roles (no autofill), box scores only
+  (same end-of-game-stomp caveat applies), players repeat across games
+  (cluster bootstrap uses matchId), patch/league meta mixing
+
+## Pro results (tier 1, 2025-2026, 4,670 games / 46,700 player-games)
+
+Role ranking flips vs the ladder. Model B (share-of-team-output -> win,
+well-formed per role): **Support 0.735 > Jungle 0.674 > Bottom 0.620 >
+Top 0.609 > Mid 0.603** — Support leads, which it never did in solo queue.
+Holds in the 32min+ close-game cut (Support 0.737, Jungle 0.645). Reading of
+the coefficients: support winning = *less* damage share, *more* gold share
+(reverse-causal: ahead supports get gold), positive death share; jungle
+winning = big cs_share + vision_share. Raw Model A hits 0.93-0.98 AUC —
+even stronger stomp artifact than ladder (pro leads close out); the honest
+number there is the equal-weight composite: Jungle 0.770 / Bottom 0.770 /
+Mid 0.719 / Support 0.708 / Top 0.693.
+
+Player-level (`results/player_impact_pro.csv`, min 20 games, 349 players):
+`outperform` = own composite minus teammates' mean (team strength cancels).
+Headliners: Adam (NAV top, +0.56, carried 73% of games), Castle (LYON),
+Keshi, Kiaya, and Chovy as the elite big-sample case (282 games, +0.245,
+0.727 win rate — Gen.G's engine). Wenbo (BLG top) posts the largest
+*negative* differential among winners' teams. See
+`results/player_impact_pro.md` for all leaderboards and
+`results/player_impact_teams_pro.csv` for each team's most impactful player.
+
 ## Pipeline
 1. `collect_matches.py` — Riot API collector with rate limiting + checkpoints
 2. `prepare_features.py` — per-player metrics, z-scored within **role** and
@@ -95,6 +143,14 @@ python analyze_impact.py                      # own vs teammates decomposition
 python analyze_tiers.py SILVER DIAMOND        # rank comparisons
 python analyze_ladder.py                      # role impact across the ladder
 python build_web.py                           # interactive explorer -> web/index.html
+
+# ---- pro-play track (tier 1 only) ----
+python collect_pro.py                         # download OE 2025+2026 CSVs, convert
+python prepare_features.py --input data/raw/pro_matches.jsonl `
+    --output data/processed/player_games_pro.parquet --no-queue-filter
+python analyze_shares.py --input data/processed/player_games_pro.parquet --tag _pro
+python analyze_roles.py  --input data/processed/player_games_pro.parquet --tag _pro
+python analyze_players_pro.py                 # player outperformance/importance
 ```
 You can run steps 2+ at any time on partial data.
 

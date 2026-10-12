@@ -1,0 +1,93 @@
+player,role,team,axis,value,z,direction,games
+Ackerman,SUPPORT,LOS,Swing (win-rate gap: good games vs bad games),-0.4888888888888888,-3.6683552304589853,low,19
+Ayu,BOTTOM,FURIA,"Raw level (vs role x league peers, z)",-0.397626509857128,-3.4335617585316833,low,22
+Ayu,BOTTOM,FURIA,Team win rate in his games,0.2272727272727272,-3.350533040854654,low,22
+Ayu,BOTTOM,FURIA,"Career outperformance (all stints, z)",-0.2960179504380025,-2.3189477812648986,low,22
+Ayu,BOTTOM,FURIA,Outperformance vs teammates (z),-0.2960179504380025,-2.2691684854148613,low,22
+Ayu,BOTTOM,FURIA,Swing (win-rate gap: good games vs bad games),-0.2142857142857143,-1.614840214526917,low,22
+Bie,SUPPORT,Team Secret Whales,"Raw level (vs role x league peers, z)",0.2955762640109158,2.063864421157672,high,102
+Busio,SUPPORT,Karmine Corp,Outperformance vs teammates (z),-0.209948568511122,-1.6158823796875093,low,138
+Busio,SUPPORT,Karmine Corp,"Career outperformance (all stints, z)",-0.19763370335857,-1.555342890252394,low,138
+Canna,TOP,Karmine Corp,Signature-champion share of games,0.2246376811594203,1.785578555802095,high,246
+Chika,MIDDLE,MVK Esports,Player AUC (own score predicts the win),0.3692307692307692,-3.7911271554985504,low,48
+Chika,MIDDLE,MVK Esports,Swing (win-rate gap: good games vs bad games),-0.3571428571428572,-2.6831428239713464,low,48
+Chovy,MIDDLE,Gen.G,Carry rate (share of games as team's best),0.375886524822695,2.0556663561682194,high,282
+Chovy,MIDDLE,Gen.G,"Career outperformance (all stints, z)",0.2449579580288463,1.8798123036875307,high,282
+Chovy,MIDDLE,Gen.G,"Raw level (vs role x league peers, z)",0.2697820068793749,1.8593037503321328,high,282
+Chovy,MIDDLE,Gen.G,Outperformance vs teammates (z),0.2449579580288463,1.8369612046398687,high,282
+Curse,JUNGLE,LOS,"Raw level (vs role x league peers, z)",-0.2275089849583697,-2.084449247362746,low,19
+Curse,JUNGLE,LOS,"Career outperformance (all stints, z)",-0.2515746166719225,-1.9740028531476967,low,19
+Curse,JUNGLE,LOS,Outperformance vs teammates (z),-0.2515746166719225,-1.9318335145857561,low,19
+Curse,JUNGLE,LOS,Carry rate (share of games as team's best),0.0526315789473684,-1.7267713044551098,low,19
+Curse,JUNGLE,LOS,"Playoffs minus regular season (outperform, z)",-0.2350697472503664,-1.5915071384331059,low,19
+Delight,SUPPORT,Hanwha Life Esports,Differential std across games (lower = steadier),0.3390001896844911,-1.6898310358762976,low,281
+Dire,MIDDLE,Team Secret Whales,Outperformance vs teammates (z),-0.2585880220046243,-1.9850668497755055,low,180
+Dire,MIDDLE,Team Secret Whales,"Career outperformance (all stints, z)",-0.2529543191773786,-1.9847113518411703,low,180
+Duduhh,BOTTOM,LOS,"Playoffs minus regular season (outperform, z)",-0.3838232637671674,-2.638393053260272,low,19
+Duduhh,BOTTOM,LOS,Differential std across games (lower = steadier),0.5538202202678147,2.5079497333677923,high,19
+Duro,SUPPORT,Gen.G,"Career outperformance (all stints, z)",-0.2548674709678277,-1.9995601930713804,low,282
+Duro,SUPPORT,Gen.G,Outperformance vs teammates (z),-0.2548674709678277,-1.9568270246068575,low,282
+Duro,SUPPORT,Gen.G,Carry rate (share of games as team's best),0.0602836879432623,-1.6372332305027109,low,282
+Feisty,MIDDLE,LOS,"Playoffs minus regular season (outperform, z)",0.6459347325825329,4.6087575842669155,high,19
+Feisty,MIDDLE,LOS,Swing (win-rate gap: good games vs bad games),-0.2777777777777778,-2.0896413742799966,low,19
+Feisty,MIDDLE,LOS,Carry rate (share of games as team's best),0.0526315789473684,-1.7267713044551098,low,19
+Guigo,TOP,FURIA,Team win rate in his games,0.2272727272727272,-3.350533040854654,low,22
+Guigo,TOP,FURIA,Carry rate (share of games as team's best),0.4090909090909091,2.44419409613462,high,22
+Guigo,TOP,FURIA,"Career outperformance (all stints, z)",0.2648462266518789,2.0341742025193312,high,22
+Guigo,TOP,FURIA,Outperformance vs teammates (z),0.2648462266518789,1.987917668686959,high,22
+Gumayusi,BOTTOM,Hanwha Life Esports,"Raw level (vs role x league peers, z)",0.2247100316273821,1.5018616481633624,high,135
+Gury,JUNGLE,MVK Esports,"Playoffs minus regular season (outperform, z)",0.3326852080692253,2.4041944739739907,high,78
+Gury,JUNGLE,MVK Esports,"Career outperformance (all stints, z)",0.1977410102820296,1.5133400959057168,high,78
+Hizto,JUNGLE,Team Secret Whales,Swing (win-rate gap: good games vs bad games),0.2774193548387096,2.0621884444318104,high,180
+Jojo,SUPPORT,FURIA,Team win rate in his games,0.2272727272727272,-3.350533040854654,low,22
+Jojo,SUPPORT,FURIA,Signature-champion share of games,0.2307692307692307,1.9491103900018754,high,22
+Josedeodo,JUNGLE,Team Liquid,Swing (win-rate gap: good games vs bad games),0.2050980392156862,1.5213610930421,high,101
+KIno,SUPPORT,CTBC Flying Oyster,Differential std across games (lower = steadier),0.3469461769290548,-1.5345591445293199,low,61
+Kanavi,JUNGLE,Hanwha Life Esports,"Raw level (vs role x league peers, z)",0.2638202727489272,1.812024376214525,high,135
+Kratos,TOP,MVK Esports,Signature-champion share of games,0.217391304347826,1.5923136608387136,high,65
+Kratos,TOP,MVK Esports,Team win rate in his games,0.4153846153846153,-1.5689863244833056,low,65
+Kratos,TOP,MVK Esports,Player AUC (own score predicts the win),0.7953216374269007,1.5072842493312195,high,65
+Kyeahoo,MIDDLE,Karmine Corp,Carry rate (share of games as team's best),0.0579710144927536,-1.6642940481871573,low,138
+Kyeahoo,MIDDLE,Karmine Corp,Outperformance vs teammates (z),-0.2091418246085952,-1.6097590107193347,low,138
+Lucid,JUNGLE,Dplus KIA,Signature-champion share of games,0.2167832167832167,1.5760956276949334,high,274
+ON,SUPPORT,Bilibili Gaming,"Career outperformance (all stints, z)",0.2021812973076801,1.5478031831472,high,357
+ON,SUPPORT,Bilibili Gaming,Outperformance vs teammates (z),0.2021812973076801,1.5122766597654602,high,357
+Oner,JUNGLE,T1,Player AUC (own score predicts the win),0.810272536687631,1.6931976801702282,high,316
+Peyz,BOTTOM,T1,Differential std across games (lower = steadier),0.5466020756824663,2.3669005563067813,high,150
+Pout,MIDDLE,CTBC Flying Oyster,Signature-champion share of games,0.2285714285714285,1.890493784496499,high,61
+Pun,TOP,Team Secret Whales,Player AUC (own score predicts the win),0.5121951219512195,-2.013375005716578,low,118
+Rest,TOP,CTBC Flying Oyster,Signature-champion share of games,0.2407407407407407,2.2150561001651585,high,141
+Rest,TOP,CTBC Flying Oyster,"Career outperformance (all stints, z)",-0.204744924752199,-1.6105363139807243,low,141
+Rest,TOP,CTBC Flying Oyster,Outperformance vs teammates (z),-0.204744924752199,-1.5763855447997295,low,141
+Ruler,BOTTOM,Gen.G,"Playoffs minus regular season (outperform, z)",0.2641866574057063,1.9221207082246363,high,282
+Saint,MIDDLE,LYON,Carry rate (share of games as team's best),0.3360655737704918,1.589717522705411,high,122
+Saint,MIDDLE,LYON,"Career outperformance (all stints, z)",0.2054085750152736,1.5728515533419156,high,122
+Saint,MIDDLE,LYON,Outperformance vs teammates (z),0.2054085750152736,1.5367724286265119,high,122
+SiuLoong,SUPPORT,MVK Esports,Differential std across games (lower = steadier),0.3133280027222158,-2.1914891561272305,low,62
+SiuLoong,SUPPORT,MVK Esports,Player AUC (own score predicts the win),0.7972831765935213,1.5316758574767837,high,62
+SkewMond,JUNGLE,G2 Esports,Carry rate (share of games as team's best),0.3319672131147541,1.5417622048088737,high,244
+SkewMond,JUNGLE,G2 Esports,"Career outperformance (all stints, z)",0.1990638432109799,1.5236072039491753,high,244
+Supa,BOTTOM,Movistar KOI,Swing (win-rate gap: good games vs bad games),0.2246753246753247,1.667762349038692,high,220
+Tactical,BOTTOM,Cloud9,Signature-champion share of games,0.28125,3.2954605477034935,high,32
+Tactical,BOTTOM,Cloud9,Player AUC (own score predicts the win),0.5396825396825397,-1.6715708074395377,low,32
+Tactical,BOTTOM,Cloud9,Differential std across games (lower = steadier),0.5087483607287197,1.6272041869980032,high,32
+Tatu,JUNGLE,FURIA,Signature-champion share of games,0.3076923076923077,4.000691582690055,high,22
+Tatu,JUNGLE,FURIA,Team win rate in his games,0.2272727272727272,-3.350533040854654,low,22
+Tatu,JUNGLE,FURIA,Swing (win-rate gap: good games vs bad games),0.4047619047619047,3.0144710930656076,high,22
+Tatu,JUNGLE,FURIA,"Raw level (vs role x league peers, z)",-0.1851959361098292,-1.7488867377315878,low,22
+Thanatos,TOP,Cloud9,"Playoffs minus regular season (outperform, z)",0.2986469611387424,2.164642750348641,high,86
+Thanatos,TOP,Cloud9,Player AUC (own score predicts the win),0.528235294117647,-1.8139165392588725,low,86
+Tutsz,MIDDLE,FURIA,Team win rate in his games,0.2272727272727272,-3.350533040854654,low,22
+Tutsz,MIDDLE,FURIA,Differential std across games (lower = steadier),0.5841098408009592,3.0998367479840407,high,22
+Tutsz,MIDDLE,FURIA,Swing (win-rate gap: good games vs bad games),-0.2142857142857143,-1.614840214526917,low,22
+Viper,BOTTOM,Bilibili Gaming,"Raw level (vs role x league peers, z)",0.2938778261715815,2.050395005000505,high,177
+Xun,JUNGLE,Bilibili Gaming,Swing (win-rate gap: good games vs bad games),0.2067160367722165,1.5334606701241122,high,177
+Yike,JUNGLE,Karmine Corp,Differential std across games (lower = steadier),0.5109031844683598,1.669311422672488,high,246
+Yike,JUNGLE,Karmine Corp,"Playoffs minus regular season (outperform, z)",-0.2338252151759979,-1.5827484675141577,low,246
+ZEST,TOP,LOS,Carry rate (share of games as team's best),0.5789473684210527,4.431701099100195,high,19
+ZEST,TOP,LOS,"Career outperformance (all stints, z)",0.4767513275920862,3.6788660745605823,high,19
+ZEST,TOP,LOS,Outperformance vs teammates (z),0.4767513275920862,3.5963253867137412,high,19
+ZEST,TOP,LOS,Differential std across games (lower = steadier),0.5600374952640369,2.629440999081584,high,19
+ZEST,TOP,LOS,"Raw level (vs role x league peers, z)",0.3551517704528373,2.5363263920678105,high,19
+Zhuo,SUPPORT,Top Esports,"Playoffs minus regular season (outperform, z)",-0.3454566892346902,-2.3683797626925793,low,45
+jojopyun,MIDDLE,Movistar KOI,Swing (win-rate gap: good games vs bad games),-0.2077922077922078,-1.5662810050067157,low,220

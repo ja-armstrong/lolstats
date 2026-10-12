@@ -58,9 +58,16 @@ def get_models():
 
 
 def main():
-    if not IN_FILE.exists():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input", type=Path, default=IN_FILE)
+    ap.add_argument("--tag", default="", help="suffix for output filenames (e.g. _pro)")
+    args = ap.parse_args()
+    tag = args.tag
+
+    if not args.input.exists():
         raise SystemExit("Run prepare_features.py first.")
-    df = pd.read_parquet(IN_FILE)
+    df = pd.read_parquet(args.input)
     df = df[df["role"].isin(ROLES)].copy()
     print(f"Analyzing {len(df):,} player-games across {df['matchId'].nunique():,} matches\n")
 
@@ -103,11 +110,11 @@ def main():
                 coef_frames[role] = pd.Series(model.coef_[0], index=METRICS, name=role)
 
     res = pd.DataFrame(rows)
-    res.to_csv(OUT_DIR / "role_auc_table.csv", index=False)
+    res.to_csv(OUT_DIR / f"role_auc_table{tag}.csv", index=False)
 
     md = res.pivot_table(index="model", columns="role", values="test_auc")
     md = md[ROLES].round(4)
-    md.to_markdown(OUT_DIR / "role_auc_table.md")
+    md.to_markdown(OUT_DIR / f"role_auc_table{tag}.md")
 
     print("=== Test AUC by role and model (higher = score predicts win rate better) ===")
     print(md.to_string())
@@ -118,7 +125,7 @@ def main():
     # logistic coefficients per role
     coefs = pd.DataFrame(coef_frames)
     coefs.index.name = "metric"
-    coefs.to_csv(OUT_DIR / "logreg_coefficients.csv")
+    coefs.to_csv(OUT_DIR / f"logreg_coefficients{tag}.csv")
     print("\n=== Logistic regression coefficients (z-units, per role) ===")
     print(coefs.round(3).to_string())
 
@@ -135,7 +142,7 @@ def main():
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "auc_by_role.png", dpi=150)
+    fig.savefig(OUT_DIR / f"auc_by_role{tag}.png", dpi=150)
 
     # decile calibration: win rate by composite-score decile, per role (logreg probs not needed)
     fig, ax = plt.subplots(figsize=(9, 5))
@@ -150,7 +157,7 @@ def main():
     ax.legend()
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "winrate_by_score_decile.png", dpi=150)
+    fig.savefig(OUT_DIR / f"winrate_by_score_decile{tag}.png", dpi=150)
 
     print(f"\nSaved results to {OUT_DIR}")
 
