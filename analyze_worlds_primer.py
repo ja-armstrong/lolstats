@@ -193,7 +193,7 @@ def main():
     def table(df: pd.DataFrame, cols_: list[str], title: str) -> str:
         out = [f"## {title}", "",
                "| " + " | ".join(cols_) + " |",
-               "|" + "---|" * len(cols_) + "|"]
+               "|" + "---|" * len(cols_)]
         for _, r in df.iterrows():
             out.append("| " + " | ".join(
                 ("" if pd.isna(r[c]) else

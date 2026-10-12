@@ -5,7 +5,7 @@ Tier-1 pro track, 2025-2026. **Only official Worlds rosters are ranked** (95 of 
 ## Full ranking — all rostered players with data, top to bottom
 
 | rank | rosterName | role | team | region | seed | games | winRate | outperform | careerOutperform | carryRate | swing | playerAUC | watchScore | sample |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---||
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | Bie | SUPPORT | Team Secret Whales | LCP | 1 | 102 | 0.71 | 0.16 | 0.18 | 0.31 | 0.14 | 0.78 | 91.33 |  |
 | 2 | Josedeodo | JUNGLE | Team Liquid | LCS | 1 | 101 | 0.64 | 0.13 | 0.13 | 0.30 | 0.21 | 0.78 | 88.88 |  |
 | 3 | Tian | JUNGLE | Top Esports | LPL | 3 | 97 | 0.57 | 0.16 | 0.15 | 0.28 | 0.13 | 0.79 | 88.30 |  |
@@ -105,7 +105,7 @@ Tier-1 pro track, 2025-2026. **Only official Worlds rosters are ranked** (95 of 
 ## The watch list — top 25 (full-sample players)
 
 | rosterName | role | team | games | winRate | outperform | carryRate | swing | watchScore |
-|---|---|---|---|---|---|---|---|---||
+|---|---|---|---|---|---|---|---|---|
 | Bie | SUPPORT | Team Secret Whales | 102 | 0.71 | 0.16 | 0.31 | 0.14 | 91.33 |
 | Josedeodo | JUNGLE | Team Liquid | 101 | 0.64 | 0.13 | 0.30 | 0.21 | 88.88 |
 | Tian | JUNGLE | Top Esports | 97 | 0.57 | 0.16 | 0.28 | 0.13 | 88.30 |
@@ -135,7 +135,7 @@ Tier-1 pro track, 2025-2026. **Only official Worlds rosters are ranked** (95 of 
 ## Best at TOP
 
 | rosterName | team | games | winRate | outperform | carryRate | swing | watchScore |
-|---|---|---|---|---|---|---|---||
+|---|---|---|---|---|---|---|---|
 | ZEST | LOS | 19 | 0.63 | 0.48 | 0.58 | -0.07 | 81.97 |
 | Guigo | FURIA | 22 | 0.23 | 0.26 | 0.41 | 0.10 | 81.84 |
 | Canna | Karmine Corp | 246 | 0.61 | 0.12 | 0.24 | 0.01 | 75.57 |
@@ -148,7 +148,7 @@ Tier-1 pro track, 2025-2026. **Only official Worlds rosters are ranked** (95 of 
 ## Best at JUNGLE
 
 | rosterName | team | games | winRate | outperform | carryRate | swing | watchScore |
-|---|---|---|---|---|---|---|---||
+|---|---|---|---|---|---|---|---|
 | Josedeodo | Team Liquid | 101 | 0.64 | 0.13 | 0.30 | 0.21 | 88.88 |
 | Tian | Top Esports | 97 | 0.57 | 0.16 | 0.28 | 0.13 | 88.30 |
 | Kanavi | Hanwha Life Esports | 135 | 0.62 | 0.14 | 0.27 | 0.05 | 82.11 |
@@ -161,7 +161,7 @@ Tier-1 pro track, 2025-2026. **Only official Worlds rosters are ranked** (95 of 
 ## Best at MIDDLE
 
 | rosterName | team | games | winRate | outperform | carryRate | swing | watchScore |
-|---|---|---|---|---|---|---|---||
+|---|---|---|---|---|---|---|---|
 | Saint | LYON | 122 | 0.62 | 0.21 | 0.34 | -0.03 | 67.89 |
 | Chovy | Gen.G | 282 | 0.73 | 0.24 | 0.38 | -0.09 | 66.71 |
 | Creme | Top Esports | 323 | 0.59 | 0.01 | 0.19 | 0.10 | 59.62 |
@@ -174,7 +174,7 @@ Tier-1 pro track, 2025-2026. **Only official Worlds rosters are ranked** (95 of 
 ## Best at BOTTOM
 
 | rosterName | team | games | winRate | outperform | carryRate | swing | watchScore |
-|---|---|---|---|---|---|---|---||
+|---|---|---|---|---|---|---|---|
 | Peyz | T1 | 150 | 0.63 | 0.09 | 0.31 | 0.19 | 82.60 |
 | Eddie | Team Secret Whales | 180 | 0.64 | 0.07 | 0.24 | 0.15 | 80.65 |
 | Berserker | LYON | 122 | 0.62 | 0.08 | 0.27 | 0.16 | 76.92 |
@@ -187,7 +187,7 @@ Tier-1 pro track, 2025-2026. **Only official Worlds rosters are ranked** (95 of 
 ## Best at SUPPORT
 
 | rosterName | team | games | winRate | outperform | carryRate | swing | watchScore |
-|---|---|---|---|---|---|---|---||
+|---|---|---|---|---|---|---|---|
 | Bie | Team Secret Whales | 102 | 0.71 | 0.16 | 0.31 | 0.14 | 91.33 |
 | ON | Bilibili Gaming | 357 | 0.66 | 0.20 | 0.31 | 0.10 | 84.68 |
 | Kael | Anyone's Legend | 325 | 0.62 | 0.12 | 0.29 | -0.08 | 65.54 |
