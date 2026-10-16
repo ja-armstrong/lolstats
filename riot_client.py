@@ -10,6 +10,7 @@ import time
 import json
 from collections import deque
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 
@@ -104,7 +105,14 @@ class RiotAPI:
             if resp.status_code in (500, 502, 503, 504):
                 time.sleep(min(2 ** attempt, 30))
                 continue
-            # 400/401/403 -> config error, raise
+            if resp.status_code in (401, 403):
+                raise RuntimeError(
+                    f"{resp.status_code} from {url}: Riot rejected this API key "
+                    f"({'missing' if not self.key else self.key[:6] + '...'}). "
+                    "Dev keys expire 24h after they are created - request a new one at "
+                    "https://developer.riotgames.com/ and update RIOT_API_KEY in .env."
+                )
+            # 400 -> bad request/params
             resp.raise_for_status()
         return None
 
@@ -125,6 +133,27 @@ class RiotAPI:
     def summoner_by_id(self, summoner_id: str):
         return self.get(f"/lol/summoner/v4/summoners/{summoner_id}")
 
+    # ---- single-player lookup: Riot ID -> puuid -> matches ----
+    # Summoner-V4 by-name is deprecated; Riot ID (gameName + tagLine) is the
+    # supported way to resolve a player, and it is shard-scoped: looking a
+    # NA1 account up on the eu route returns 404, not "wrong region" advice.
+    def account_by_riot_id(self, game_name: str, tag_line: str):
+        g, t = quote(str(game_name), safe=""), quote(str(tag_line), safe="")
+        return self.get(f"/riot/account/v1/accounts/by-riot-id/{g}/{t}", regional=True)
+
+    def account_by_puuid(self, puuid: str):
+        return self.get(f"/riot/account/v1/accounts/by-puuid/{quote(puuid, safe='')}",
+                        regional=True)
+
+    def summoner_by_puuid(self, puuid: str):
+        return self.get(f"/lol/summoner/v4/summoners/by-puuid/{quote(puuid, safe='')}")
+
+    def league_entries_by_puuid(self, puuid: str):
+        return self.get(f"/lol/league/v4/entries/by-puuid/{quote(puuid, safe='')}")
+
+    def league_entries_by_summoner(self, summoner_id: str):
+        return self.get(f"/lol/league/v4/entries/by-summoner/{summoner_id}")
+
     def match_ids(self, puuid: str, start: int = 0, count: int = 100, queue: int = 420):
         return self.get(
             f"/lol/match/v5/matches/by-puuid/{puuid}/ids",
@@ -143,6 +172,8 @@ PARTICIPANT_FIELDS = [
     "totalMinionsKilled", "neutralMinionsKilled", "goldEarned",
     "totalDamageDealtToChampions", "visionScore",
     "wardsPlaced", "wardsKilled",
+    # kept so collected games are addressable by name later, not only by puuid
+    "riotIdGameName", "riotIdTagLine",
 ]
 
 

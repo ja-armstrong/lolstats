@@ -1,5 +1,9 @@
 # Which LoL Role Has the Most Impact?
 
+> Two tracks now share one corpus. **(1)** The role-impact study, answered below.
+> **(2)** Single-player reports: look someone up by Riot ID (`Name#TAG`) and score their
+> games against the collected population — see [Single-player reports](#single-player-reports).
+
 ## Question
 Build a normalized performance score for each role, see how accurately it
 predicts that player's win rate, and rank roles by predictive power. The role
@@ -94,6 +98,49 @@ Keshi, Kiaya, and Chovy as the elite big-sample case (282 games, +0.245,
 `results/player_impact_pro.md` for all leaderboards and
 `results/player_impact_teams_pro.csv` for each team's most impactful player.
 
+## Single-player reports
+
+Look up one player by Riot ID and compare their games against the collected population:
+
+```powershell
+python build_reference.py                                   # freeze corpus -> baseline distributions
+python collect_player.py "killed cat#NA1" --region na1 --n 40
+python build_player_web.py                                  # -> web/players/<slug>.html
+```
+
+- `build_reference.py` writes `data/processed/reference.json` (Python) and `web/reference.js`
+  (browser): mean/sd, a 21-point quantile grid, the equal-weight composite distribution and the
+  teammate-differential distribution for every role and every role x rank band (45 groups at
+  96k player-games), plus 120-400 z-scored sample rows per group so a page can re-rank you under
+  custom weights without shipping the corpus.
+- `collect_player.py` resolves `Name#TAG` through Account-V1 (**Summoner-V4 `by-name` is
+  deprecated**; Riot IDs are shard-scoped, so a wrong `--region` reads as "player not found"),
+  pulls the last N ranked solo (420) games, and writes them in the *same* compact schema as
+  `data/raw/matches.jsonl` — so `prepare_features.load_matches()` parses player files unchanged.
+  Per-player cache: re-running only fetches games not already on disk.
+- `build_player_web.py` scores each player against the baseline and emits static HTML. No
+  backend, and no API key anywhere in the page.
+
+| Panel | Method, and why |
+|---|---|
+| Metric percentiles | Every metric is percentiled **per game, inside the role played in that game**, then averaged. A jungler's CS/min is never judged against ADC CS. Averaging per-game ranks rather than taking the percentile of the average stops one 25-0 stomp from carrying the number (the orange tick shows how far apart those two are). |
+| Two baselines | *All ranks* = every corpus game for that role. *My band* = role x the player's rank band. Same player can read 56th percentile overall but 45th against Apex peers — rank matching is the whole point. |
+| Teammate differential | Own score minus the mean of your four teammates' scores on the same baseline, so team strength cancels out: the within-team estimand from Model C. |
+| Score weights | Sliders re-rank score, trend, distribution and differential live. Non-default weights read percentiles off the sampled baseline (~1% granularity). |
+
+Stated limits: 40 games is a small sample (a 5-point percentile move is noise); the band is the
+player's **current** tier applied to all their games, so promotions score old games generously;
+end-of-game box scores partly re-encode the win (the stomp caveat from the assumptions audit),
+which is why the differential panel is the one to trust; the baseline is NA ranked solo, so
+other regions inherit NA's playstyle; percentiles describe association with winning in the
+corpus, not causal carry value.
+
+Hosting: `web/` is committed, so GitHub Pages from the branch root serves the landing page at
+`/`, reports at `/web/players/`, the explorer at `/web/index.html`. Looked-up games stay in
+gitignored `data/` (they contain PUUIDs). Letting *strangers* search arbitrary players would need
+a backend holding the key — Riot deliberately sends no CORS headers, so a static page cannot call
+the API itself — plus a production key for real traffic.
+
 ## Pipeline
 1. `collect_matches.py` — Riot API collector with rate limiting + checkpoints
 2. `prepare_features.py` — per-player metrics, z-scored within **role** and
@@ -107,6 +154,10 @@ Keshi, Kiaya, and Chovy as the elite big-sample case (282 games, +0.245,
 7. `analyze_rigor.py` — the audit: three estimands, cluster-bootstrap CIs,
    paired role comparisons, close-game robustness, player-clustered
    pseudoreplication check, champion controls, patch stability
+8. `build_reference.py` — freeze the corpus into baseline distributions
+   (`reference.json` for Python, `reference.js` for the browser)
+9. `collect_player.py` + `build_player_web.py` — one player by Riot ID, scored
+   against those baselines as a static report page
 
 ## Assumptions audit (what we checked and what we found)
 
@@ -151,6 +202,12 @@ python prepare_features.py --input data/raw/pro_matches.jsonl `
 python analyze_shares.py --input data/processed/player_games_pro.parquet --tag _pro
 python analyze_roles.py  --input data/processed/player_games_pro.parquet --tag _pro
 python analyze_players_pro.py                 # player outperformance/importance
+
+# ---- single-player track (needs a fresh-ish Riot ID lookup) ----
+python build_reference.py                     # re-run whenever the corpus changes
+python collect_player.py "killed cat#NA1" --region na1 --n 40
+python build_player_web.py                    # all players, or --slug <name>
+python build_player_web.py --no-html          # print the summary only
 ```
 You can run steps 2+ at any time on partial data.
 
@@ -160,3 +217,7 @@ You can run steps 2+ at any time on partial data.
   match. What matters is the *relative* ranking across roles and estimand.
 - Dev API keys rate-limit to 100 requests/2 min; collection of ~10k matches
   takes a few hours. State persists in `data/raw/state.json`.
+- Dev keys also **expire 24h after they are created**. A `401/403` from any script
+  means generate a new one at developer.riotgames.com and paste it into `.env`
+  (`RIOT_API_KEY=...`) — the lookup paths now fail with that advice instead of a
+  bare traceback.
