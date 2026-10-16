@@ -52,7 +52,7 @@ code{background:#20242e;padding:1px 5px;border-radius:4px;font-size:12px}
       </div>
       <div>
         <label for="n">Games</label>
-        <input id="n" type="number" min="5" max="100" value="40">
+        <input id="n" type="number" min="5" max="500" value="100">
       </div>
       <div>
         <label for="go">&nbsp;</label>
@@ -63,9 +63,10 @@ code{background:#20242e;padding:1px 5px;border-radius:4px;font-size:12px}
     <div id="bar"><span></span></div>
     <div id="status"></div>
     <ul id="steps"></ul>
-    <div class="note">A fresh lookup is ~42 API requests and a Riot dev key allows 100 per 2
-      minutes, so expect about a minute; a cached player is instant. Reports are written to
-      <code>data/players/</code> (gitignored) and <code>web/players/</code>.</div>
+    <div class="note">Costs ~1 API request per game. A dev key allows 100 requests per 2 minutes, so
+      100 games takes about 2 minutes and 500 takes about 10; the page will keep polling and reports
+      progress. Everything fetched is cached, so the next lookup of the same player is instant, and the
+      report itself lets you switch between <b>last 50 / last 100 / all</b> without re-fetching.</div>
   </div>
   <p class="note"><a href="index.html">explorer / home</a> &middot;
     <a href="players/index.html">built reports</a> &middot;

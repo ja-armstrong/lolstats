@@ -44,8 +44,9 @@ WEB = ROOT / "web"
 PLAYERS_WEB = WEB / "players"
 DATA_PLAYERS = ROOT / "data" / "players"
 REF_FILE = ROOT / "data" / "processed" / "reference.json"
+MAX_GAMES = 500          # mirrors collect_player.py
 
-CFG = {"ttl": 900, "n": 40, "region": "na1"}
+CFG = {"ttl": 900, "n": 100, "region": "na1"}
 REF: dict = {}
 JOBS: dict[str, dict] = {}
 QUEUE: queue.Queue[str] = queue.Queue()
@@ -78,18 +79,25 @@ def classify_error(exc: Exception, msg: str) -> str:
 
 def make_progress(job: dict):
     def progress(stage: str, **info):
+        text = stage
+        if stage == "collect":
+            text = f"fetching games {info.get('done')}/{info.get('total')}"
+        elif stage == "ids":
+            text = f"reading recent game list ({info.get('got')}/{info.get('want')} ids)"
+        elif stage == "planning":
+            text = (f"{info.get('already', 0)} cached, fetching {info.get('toFetch')} "
+                    f"(~{info.get('minutes')} min at dev-key limits)")
+        elif stage == "matchlist":
+            text = "reading recent game list"
+        elif stage == "resolve":
+            text = f'resolving {info.get("riotId")} in {info.get("region")}'
+        elif stage == "profile":
+            text = "reading summoner + rank"
+        elif stage == "done":
+            text = f"stored {info.get('games')} games"
         with LOCK:
             job["stage"] = stage
             job["progress"] = info
-            text = stage
-            if stage == "collect":
-                text = f"fetching games {info.get('done')}/{info.get('total')}"
-            elif stage == "matchlist":
-                text = "reading recent game list"
-            elif stage == "resolve":
-                text = f'resolving {info.get("riotId")} in {info.get("region")}'
-            elif stage == "profile":
-                text = "reading summoner + rank"
             if not job["stages"] or job["stages"][-1] != text:
                 job["stages"].append(text)
                 job["stages"] = job["stages"][-8:]
@@ -172,7 +180,7 @@ def handle_lookup(qs: dict) -> tuple[int, dict]:
         n = int((qs.get("n") or [CFG["n"]])[0])
     except ValueError:
         n = CFG["n"]
-    n = max(1, min(n, 100))
+    n = max(1, min(n, MAX_GAMES))
     force = (qs.get("force") or [""])[0] not in ("", "0", "false")
     try:
         game, tag = cp.split_riot_id(riot_id, None)
@@ -326,10 +334,10 @@ def main():
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--ttl", type=int, default=900,
                     help="seconds a cached player is served without re-fetching")
-    ap.add_argument("--n", type=int, default=40, help="games per lookup (max 100)")
+    ap.add_argument("--n", type=int, default=100, help="games per lookup (max 500; dev key ~100 requests / 2 min)")
     ap.add_argument("--region", default="na1", help="default shard for the search page")
     args = ap.parse_args()
-    CFG.update({"ttl": args.ttl, "n": max(1, min(args.n, 100)), "region": args.region})
+    CFG.update({"ttl": args.ttl, "n": max(1, min(args.n, MAX_GAMES)), "region": args.region})
 
     if REF_FILE.is_file():
         REF.update(json.loads(REF_FILE.read_text(encoding="utf-8")))

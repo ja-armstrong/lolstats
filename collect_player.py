@@ -32,6 +32,8 @@ PLAYER_DIR = ROOT / "data" / "players"
 SOLO_QUEUE = 420
 MIN_DURATION_S = 600          # same remake filter as prepare_features
 SOLO_LEAGUE = "RANKED_SOLO_5x5"
+MAX_GAMES = 500               # pages of 100 ids; dev key = ~100 requests / 2 min
+PAGE = 100
 
 
 def split_riot_id(text: str, default_tag: str | None) -> tuple[str, str]:
@@ -92,7 +94,26 @@ def find_solo_rank(entries, summoner_id: str, api: RiotAPI):
     return None
 
 
-def collect(game_name: str, tag_line: str, region: str = "na1", n: int = 40,
+def fetch_ids(api: RiotAPI, puuid: str, want: int, queue: int, report=None):
+    """Most recent `want` match ids, paging 100 at a time until Riot runs out."""
+    ids, start, exhausted = [], 0, False
+    while len(ids) < want:
+        count = min(PAGE, want - len(ids))
+        page = api.match_ids(puuid, start=start, count=count, queue=queue)
+        if not page:
+            exhausted = True
+            break
+        ids.extend(page)
+        if report:
+            report("ids", got=len(ids), want=want)
+        if len(page) < count:          # short page == end of available history
+            exhausted = True
+            break
+        start += len(page)
+    return ids, exhausted
+
+
+def collect(game_name: str, tag_line: str, region: str = "na1", n: int = 100,
             out_dir: Path | None = None, progress=None) -> dict:
     """Resolve a Riot ID, fetch that player's ranked solo games, return profile.
 
@@ -109,7 +130,7 @@ def collect(game_name: str, tag_line: str, region: str = "na1", n: int = 40,
     region = region.lower()
     if region not in ROUTES:
         raise ValueError(f"unknown region '{region}'. Valid: {', '.join(sorted(ROUTES))}")
-    n = max(1, min(int(n), 100))
+    n = max(1, min(int(n), MAX_GAMES))
 
     api = RiotAPI(region=region)
     slug = slugify(game_name)
@@ -138,11 +159,15 @@ def collect(game_name: str, tag_line: str, region: str = "na1", n: int = 40,
         tier_label = rank["tier"]
 
     report("matchlist")
-    ids = api.match_ids(puuid, count=n, queue=SOLO_QUEUE) or []
+    ids, exhausted = fetch_ids(api, puuid, n, SOLO_QUEUE, report)
     have = existing_ids(raw_file)
     todo = [m for m in ids if m not in have]
+    if todo:
+        print_eta = round(len(todo) / 50.0, 1)   # ~100 match calls per 2 minutes
+        report("planning", toFetch=len(todo), already=len(have), minutes=print_eta)
 
     t0, got, skipped = time.time(), 0, {"surrender": 0, "short": 0, "other": 0}
+    throttle = max(5, len(todo) // 20)
     with raw_file.open("a", encoding="utf-8") as f:
         for i, mid in enumerate(todo, 1):
             raw = api.match(mid)
@@ -164,7 +189,7 @@ def collect(game_name: str, tag_line: str, region: str = "na1", n: int = 40,
                 continue
             f.write(json.dumps(slim) + "\n")
             got += 1
-            if i % 5 == 0 or i == len(todo):
+            if i % throttle == 0 or i == len(todo):
                 report("collect", done=i, total=len(todo), kept=got,
                        seconds=round(time.time() - t0))
 
@@ -185,6 +210,8 @@ def collect(game_name: str, tag_line: str, region: str = "na1", n: int = 40,
         "queue": SOLO_QUEUE,
         "gamesStored": len(stored),
         "requestedN": n,
+        "idsFound": len(ids),
+        "historyExhausted": bool(exhausted),
         "skipped": skipped,
         "apiCalls": api.calls_made,
         "collectedAt": int(time.time()),
@@ -201,7 +228,8 @@ def main():
     ap.add_argument("--tag", default=None, help="tag line, if riot_id has no #TAG")
     ap.add_argument("--region", default="na1",
                     help="shard: " + " ".join(sorted(ROUTES)))
-    ap.add_argument("--n", type=int, default=40, help="recent ranked solo games to keep (max 100)")
+    ap.add_argument("--n", type=int, default=100,
+                    help=f"recent ranked solo games to keep (max {MAX_GAMES}; 100 per id page)")
     ap.add_argument("--out", type=Path, default=None, help="override the output folder")
     args = ap.parse_args()
 
@@ -216,10 +244,19 @@ def main():
         elif stage == "profile":
             print("[lookup] summoner + rank ...")
         elif stage == "matchlist":
-            print("[matchlist] requesting recent ranked solo ids ...")
-        elif stage == "collect" and info["done"] % 10 == 0:
-            print(f'[collect] {info["done"]}/{info["total"]} fetched '
-                  f'({info["kept"]} kept, {info["seconds"]}s)')
+            print(f"[matchlist] asking for up to {args.n} recent ranked solo ids ...")
+        elif stage == "ids":
+            print(f"[matchlist] {info['got']}/{info['want']} ids")
+        elif stage == "planning":
+            if info["toFetch"] == 0:
+                print(f"[collect] all {info['already']} games already on disk")
+            else:
+                print(f"[collect] {info['already']} cached, {info['toFetch']} to fetch "
+                      f"(~{info['minutes']} min at dev-key limits)")
+        elif stage == "collect":
+            pct = info["done"] / max(1, info["total"]) * 100
+            print(f'[collect] {info["done"]}/{info["total"]} ({pct:.0f}%) '
+                  f'kept {info["kept"]} | {info["seconds"]}s')
         elif stage == "done":
             print(f"[done] {info['games']} games stored "
                   f"({info['fetched']} fetched this run, skipped {info['skipped']})")

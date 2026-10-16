@@ -13,10 +13,33 @@ const SIGNS = {}; METS.forEach(m => SIGNS[m.key] = m.sign);
 const AX = Object.fromEntries(REF.axes.map(a => [a.key, a]));
 const AXLBL = Object.fromEntries(REF.axes.map(a => [a.key, a.label]));
 const MI = {}; MK.forEach((k, i) => MI[k] = i);
-const HAS_PERSONAL = !!(P.personal && (P.personal.band || P.personal.overall));
 const state = { baseline: P.bandAvailable ? 'band' : 'overall', role: 'ALL',
-                axis: 'C', w: Object.assign({}, DEF_W), custom: false };
+                axis: 'C', w: Object.assign({}, DEF_W), custom: false,
+                win: (P.windows || []).slice(-1)[0] || String(P.nGames) };
 for (const k in REF.groups) REF.groups[k].__key = k;
+
+// ---- recency window: deep history crosses patches and old ranks ----
+const WINDOWS = P.windows || [String(P.nGames)];
+function windowGames() {
+  const n = +state.win;
+  return n >= P.games.length ? P.games : P.games.slice(-n);
+}
+function roleCounts() {
+  const c = {};
+  windowGames().forEach(g => {
+    const r = c[g.role] || (c[g.role] = { games: 0, wins: 0 });
+    r.games++; r.wins += g.win ? 1 : 0;
+  });
+  return c;
+}
+function windowSpan() {
+  const gs = windowGames();
+  if (!gs.length) return { from: '-', to: '-', patches: [] };
+  const byRoleFilter = state.role === 'ALL' ? gs : gs.filter(g => g.role === state.role);
+  const use = byRoleFilter.length ? byRoleFilter : gs;
+  return { from: use[0].date, to: use[use.length - 1].date,
+           patches: [...new Set(use.map(g => g.patch).filter(Boolean))] };
+}
 
 function groupFor(role) {
   if (state.baseline === 'band' && P.band) {
@@ -107,7 +130,7 @@ function diffPct(p, v) {
 }
 
 function rows() {
-  let gs = P.games;
+  let gs = windowGames();
   if (state.role !== 'ALL') gs = gs.filter(g => g.role === state.role);
   return gs.map(g => {
     const p = prep(g);
@@ -195,7 +218,7 @@ function axisBtns() {
 }
 
 function modelPanel(rs) {
-  const per = (P.personal && (P.personal[state.baseline] || P.personal.overall)) || null;
+  const per = (P.personal[state.baseline] || {})[state.win] || (P.personal.overall || {})[WINDOWS[WINDOWS.length - 1]] || null;
   const box = document.getElementById('modelPanel');
   if (!per || !per.axes) {
     box.innerHTML = '<div class="note">' + (per && per.unavailable ? per.unavailable
@@ -262,7 +285,30 @@ function modelPanel(rs) {
     'Treat the ordering of rows as the hint, and any single bold row as a hypothesis to collect more games against.';
 }
 
-// ---------- baseline / role controls ----------
+// ---------- window / baseline / role controls ----------
+function windowBtns() {
+  const box = document.getElementById('windowBtns');
+  box.innerHTML = '';
+  WINDOWS.forEach(wk => {
+    const b = document.createElement('button');
+    const n = +wk, total = P.games.length;
+    b.className = 'btn' + (state.win === wk ? ' on' : '');
+    b.textContent = n >= total ? 'all ' + total : 'last ' + n;
+    b.title = 'score only the most recent ' + (n >= total ? total : n) + ' games';
+    b.onclick = () => { state.win = wk; state.role = 'ALL'; render(); };
+    box.appendChild(b);
+  });
+  const sp = windowSpan();
+  document.getElementById('windowNote').innerHTML =
+    'Window ' + sp.from + ' \u2192 ' + sp.to + ' \u00b7 ' + sp.patches.length +
+    ' patch' + (sp.patches.length === 1 ? '' : 'es') +
+    (sp.patches.length > 2 ? ' <span class="lose">(' + sp.patches.slice(-3).join(', ') +
+      ' \u2014 old metas are mixed in, prefer a tighter window)</span>'
+     : ' (' + sp.patches.join(', ') + ')') +
+    (P.meta.historyExhausted ? ' \u00b7 Riot returned the whole available history' : '') +
+    (P.meta.trimmedOlder ? ' \u00b7 ' + P.meta.trimmedOlder + ' older stored games not scored' : '');
+}
+
 function baselineBtns() {
   const box = document.getElementById('baselineBtns');
   const opts = [['overall', 'All ranks (whole corpus)']];
@@ -275,7 +321,8 @@ function baselineBtns() {
     b.onclick = () => { state.baseline = v; render(); };
     box.appendChild(b);
   });
-  const rolesInView = state.role === 'ALL' ? ROLE_ORDER.filter(r => P.roles[r]) : [state.role];
+  const counts = roleCounts();
+  const rolesInView = state.role === 'ALL' ? ROLE_ORDER.filter(r => counts[r]) : [state.role];
   const parts = rolesInView.map(r => {
     const g = groupFor(r);
     return r + ' n=' + g.n.toLocaleString() + (g.__key.includes('|') ? '' : ' (all ranks)');
@@ -289,12 +336,13 @@ function baselineBtns() {
 
 function roleBtns() {
   const box = document.getElementById('roleBtns');
+  const counts = roleCounts();
   box.innerHTML = '';
-  ['ALL'].concat(ROLE_ORDER.filter(r => P.roles[r])).forEach(r => {
+  ['ALL'].concat(ROLE_ORDER.filter(r => counts[r])).forEach(r => {
     const b = document.createElement('button');
     b.className = 'btn' + (state.role === r ? ' on' : '');
-    b.textContent = r === 'ALL' ? 'All roles (' + P.nGames + ')' :
-      r + ' ' + P.roles[r].games + 'g ' + Math.round(P.roles[r].wins / P.roles[r].games * 100) + '%W';
+    b.textContent = r === 'ALL' ? 'All roles (' + windowGames().length + ')' :
+      r + ' ' + counts[r].games + 'g ' + Math.round(counts[r].wins / counts[r].games * 100) + '%W';
     if (r !== 'ALL') b.style.borderColor = ROLE_COLORS[r] + '66';
     b.onclick = () => { state.role = r; render(); };
     box.appendChild(b);
@@ -486,7 +534,7 @@ function syncSliders() {
 
 function methodText() {
   const c = P.corpus, pr = P.profile;
-  const per = (P.personal && (P.personal[state.baseline] || P.personal.overall)) || null;
+  const per = (P.personal[state.baseline] || {})[state.win] || null;
   document.getElementById('method').innerHTML =
     '<b>Baseline.</b> Every metric is z-scored and percentiled against ' + c.nRows.toLocaleString() +
     ' player-games from ' + c.nMatches.toLocaleString() + ' ' + c.region +
@@ -523,7 +571,7 @@ function methodText() {
 let tm = null;
 function render() {
   const rs = rows();
-  axisBtns(); baselineBtns(); roleBtns(); weightsBox(); syncSliders();
+  windowBtns(); axisBtns(); baselineBtns(); roleBtns(); weightsBox(); syncSliders();
   tiles(rs);
   modelPanel(rs);
   if (!rs.length) {

@@ -104,9 +104,24 @@ Look up one player by Riot ID and compare their games against the collected popu
 
 ```powershell
 python build_reference.py                                   # freeze corpus -> baseline distributions
-python collect_player.py "killed cat#NA1" --region na1 --n 40
+python collect_player.py "killed cat#NA1" --region na1 --n 100
 python build_player_web.py                                  # -> web/players/<slug>.html
 ```
+
+### How deep to go, and why the report has a window control
+
+`collect_player.py` pages the id list 100 at a time up to `--n 500` and stops when Riot runs out of
+history (`profile.json` records `historyExhausted`). Cost is linear in games - about one request per
+match - so at a dev key's 100 requests / 2 min: 100 games ~2 min, 300 ~6 min, 500 ~10 min. Everything
+is cached per player, so widening the pull later only fetches the difference.
+
+Pulling deep is *not* automatically better, which is why the page slices it. Your own first report
+showed the problem immediately: 37 games already spanned **4 patches**, and a Diamond IV player's
+games from four months ago may predate their current rank. So the collector stores everything and the
+report fits its personal models on **last 50 / last 100 / all** separately, and the header names the
+date range and patch list of the window you're looking at - a window crossing >2 patches is flagged
+as mixing metas. Peer baselines are still keyed to your *current* band, which stays a stated
+limitation for the older games.
 
 - `build_reference.py` writes `data/processed/reference.json` (Python) and `web/reference.js`
   (browser): mean/sd, a 21-point quantile grid, the equal-weight composite distribution and the
@@ -170,10 +185,13 @@ never raced, and it calls the same `collect()` / `write_page()` functions as the
 | `/explorer`, `/` | corpus role-impact explorer, landing page |
 | `/api/health`, `/api/players`, `/api/lookup?riotId=Name#TAG&region=na1&n=40&force=1` | JSON used by the search page |
 
-A fresh 40-game lookup is ~42 requests, so it takes about a minute; results are cached in
-`data/players/<slug>/` and re-served for `--ttl` seconds (default 900), which makes a repeat
-search instant and free. If the refresh fails mid-lookup (expired key, rate limited) you still get
-the last snapshot with a warning instead of an error page.
+A fresh lookup costs roughly one request per game (100 games is ~105 requests, about 2 minutes at a
+dev key's 100-per-2-min window; 500 games is about 10 minutes), so the worker runs jobs one at a time
+and the search page polls. Results are cached in `data/players/<slug>/` and re-served for `--ttl`
+seconds (default 900), which makes a repeat search instant and free; the report then slices that
+cache into last-50 / last-100 / all windows without asking Riot again. If the refresh fails
+mid-lookup (expired key, rate limited) you still get the last snapshot with a warning instead of an
+error page.
 
 It binds `127.0.0.1` by default. `--host 0.0.0.0` hands your key's rate budget to everyone who can
 reach the port and shows every built report, so it needs a real deployment story: a Riot

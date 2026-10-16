@@ -157,7 +157,22 @@ def personal_fit(games: list[dict], ref: dict, band) -> dict:
             "baseline": used, "ridgeC": RIDGE_C, "axes": axes, "slopes": slopes}
 
 
-def player_payload(pdir: Path, ref: dict) -> dict | None:
+def personal_windows(games: list[dict], ref: dict, band) -> tuple[dict, list[str]]:
+    """Fit the personal model on several recency windows, oldest-trimmed.
+
+    Deep history costs precision: a game from four patches ago at a lower rank is
+    not the same player. So we fit on last-50, last-100 and everything, and let the
+    page show how the slopes and AUCs move as the window widens.
+    """
+    n = len(games)
+    cuts = sorted({min(50, n), min(100, n), n})
+    out = {}
+    for c in cuts:
+        out[str(c)] = personal_fit(games[-c:], ref, band)
+    return out, [str(c) for c in cuts]
+
+
+def player_payload(pdir: Path, ref: dict, window: int = 0) -> dict | None:
     profile = json.loads((pdir / "profile.json").read_text(encoding="utf-8"))
     raw_file = pdir / "matches.jsonl"
     if not raw_file.exists() or not raw_file.stat().st_size:
@@ -187,6 +202,7 @@ def player_payload(pdir: Path, ref: dict) -> dict | None:
             "id": r.matchId,
             "ts": int(r.ts),
             "date": time.strftime("%Y-%m-%d", time.gmtime((r.ts or 0) / 1000)),
+            "patch": ".".join(str(r.gameVersion or "").split(".")[:2]),
             "role": r.role,
             "champ": r.champion,
             "champKey": champ_keys.get(r.champion),
@@ -197,13 +213,12 @@ def player_payload(pdir: Path, ref: dict) -> dict | None:
             "mates": int(len(mates)),
         })
     games.sort(key=lambda g: g["ts"])
-    # keep the report stable as history piles up on disk: score the most
-    # recent requestedN games only (collect_player.py never deletes the rest)
-    want = int(profile.get("requestedN") or 0)
+    # Optional hard cap on payload size. By default a report scores EVERYTHING
+    # collected and the page slices recency windows client-side.
     trimmed = 0
-    if want and len(games) > want:
-        trimmed = len(games) - want
-        games = games[-want:]
+    if window and len(games) > window:
+        trimmed = len(games) - window
+        games = games[-window:]
 
     tier = (profile.get("soloRank") or {}).get("tier") or profile.get("tier") or ""
     band = str(tier).split("_")[0]
@@ -219,6 +234,13 @@ def player_payload(pdir: Path, ref: dict) -> dict | None:
         rr["games"] += 1
         rr["wins"] += 1 if g["win"] else 0
 
+    # fitted on several recency windows, for each baseline, so widening the window
+    # never silently changes which peer group you are compared to
+    fits_band = personal_windows(games, ref, band) if band_available else ({}, [])
+    fits_all = personal_windows(games, ref, None)
+    windows = fits_all[1]
+    patches = sorted({g["patch"] for g in games if g["patch"]})
+
     return {
         "slug": profile["slug"],
         "profile": profile,
@@ -228,15 +250,17 @@ def player_payload(pdir: Path, ref: dict) -> dict | None:
         "nWins": sum(1 for g in games if g["win"]),
         "roles": roles,
         "games": games,
-        # one personal fit per baseline, so flipping "my band / all ranks" never
-        # silently changes which peer group the comparison is against
-        "personal": {
-            "band": personal_fit(games, ref, band) if band_available else None,
-            "overall": personal_fit(games, ref, None),
-        },
+        "windows": windows,
+        "span": {"from": games[0]["date"], "to": games[-1]["date"],
+                 "days": int(round((games[-1]["ts"] - games[0]["ts"]) / 86400000.0))
+                 if games else 0,
+                 "patches": patches},
+        "personal": {"band": fits_band[0], "overall": fits_all[0]},
         "corpus": {"nRows": ref["nRows"], "nMatches": ref["nMatches"],
                    "region": ref["region"], "generated": ref["generated"]},
         "meta": {"gamesOnDisk": profile.get("gamesStored"),
+                 "requestedN": profile.get("requestedN"),
+                 "historyExhausted": profile.get("historyExhausted"),
                  "trimmedOlder": trimmed,
                  "rowsAfterFilters": int(len(df)),
                  "ddragon": cdn()["version"]},
@@ -260,10 +284,19 @@ def console_summary(payload: dict, ref: dict) -> str:
         outs.append(c - sum(zm) / len(zm))
     wr = payload["nWins"] / payload["nGames"] * 100
     top = max(payload["roles"].items(), key=lambda kv: kv[1]["games"])
-    return (f"{payload['slug']}: {payload['nGames']} games, WR {wr:.1f}%, "
+    per = (payload["personal"]["band"] or payload["personal"]["overall"] or {})
+    wins = payload.get("windows") or []
+    big = per.get(wins[-1]) if wins else None
+    note = ""
+    if big and "axes" in big:
+        c = big["axes"].get("C", {})
+        note = f", C-model gap {c.get('aucMine', 0) - c.get('aucPop', 0):+.3f} AUC on n={big.get('n')}"
+    return (f"{payload['slug']}: {payload['nGames']} games "
+            f"({payload['span']['from']}..{payload['span']['to']}, "
+            f"{len(payload['span']['patches'])} patches), WR {wr:.1f}%, "
             f"main {top[0]} ({top[1]['games']}), "
             f"vs {band or 'all ranks'}: score z {np.mean(comps):+.2f}, "
-            f"vs teammates {np.mean(outs):+.2f}")
+            f"vs teammates {np.mean(outs):+.2f}{note}")
 
 
 def write_page(payload: dict) -> dict:
@@ -395,6 +428,12 @@ svg{display:block;width:100%}
   <div class="note" id="tilesNote" style="margin:-6px 0 14px"></div>
 
   <div class="panel">
+    <h2>Games window</h2>
+    <div id="windowBtns"></div>
+    <div class="note" id="windowNote" style="margin-top:6px"></div>
+  </div>
+
+  <div class="panel">
     <h2>Scoring model</h2>
     <div id="axisBtns"></div>
     <div class="note" id="axisNote" style="margin-top:8px"></div>
@@ -520,10 +559,33 @@ const SIGNS = {}; METS.forEach(m => SIGNS[m.key] = m.sign);
 const AX = Object.fromEntries(REF.axes.map(a => [a.key, a]));
 const AXLBL = Object.fromEntries(REF.axes.map(a => [a.key, a.label]));
 const MI = {}; MK.forEach((k, i) => MI[k] = i);
-const HAS_PERSONAL = !!(P.personal && (P.personal.band || P.personal.overall));
 const state = { baseline: P.bandAvailable ? 'band' : 'overall', role: 'ALL',
-                axis: 'C', w: Object.assign({}, DEF_W), custom: false };
+                axis: 'C', w: Object.assign({}, DEF_W), custom: false,
+                win: (P.windows || []).slice(-1)[0] || String(P.nGames) };
 for (const k in REF.groups) REF.groups[k].__key = k;
+
+// ---- recency window: deep history crosses patches and old ranks ----
+const WINDOWS = P.windows || [String(P.nGames)];
+function windowGames() {
+  const n = +state.win;
+  return n >= P.games.length ? P.games : P.games.slice(-n);
+}
+function roleCounts() {
+  const c = {};
+  windowGames().forEach(g => {
+    const r = c[g.role] || (c[g.role] = { games: 0, wins: 0 });
+    r.games++; r.wins += g.win ? 1 : 0;
+  });
+  return c;
+}
+function windowSpan() {
+  const gs = windowGames();
+  if (!gs.length) return { from: '-', to: '-', patches: [] };
+  const byRoleFilter = state.role === 'ALL' ? gs : gs.filter(g => g.role === state.role);
+  const use = byRoleFilter.length ? byRoleFilter : gs;
+  return { from: use[0].date, to: use[use.length - 1].date,
+           patches: [...new Set(use.map(g => g.patch).filter(Boolean))] };
+}
 
 function groupFor(role) {
   if (state.baseline === 'band' && P.band) {
@@ -614,7 +676,7 @@ function diffPct(p, v) {
 }
 
 function rows() {
-  let gs = P.games;
+  let gs = windowGames();
   if (state.role !== 'ALL') gs = gs.filter(g => g.role === state.role);
   return gs.map(g => {
     const p = prep(g);
@@ -650,8 +712,8 @@ function header() {
   bits.push('level ' + (pr.summonerLevel ?? '?'));
   bits.push((pr.region || '').toUpperCase());
   document.getElementById('pmeta').innerHTML = bits.join(' &nbsp;\u00b7&nbsp; ') +
-    '<br><span style="font-size:12px">Last ' + P.nGames + ' ranked solo games' +
-    (P.meta.trimmedOlder ? ' (of ' + (P.nGames + P.meta.trimmedOlder) + ' stored)' : '') +
+    '<br><span style="font-size:12px">' + P.nGames + ' ranked solo games on file' +
+    (P.meta.trimmedOlder ? ' (' + P.meta.trimmedOlder + ' older ones not scored)' : '') +
     ' \u00b7 collected ' +
     (pr.collectedAtIso || '').slice(0, 10) + ' \u00b7 <a href="index.html">all reports</a> \u00b7 ' +
     '<a href="../index.html">home / explorer</a></span>';
@@ -702,7 +764,7 @@ function axisBtns() {
 }
 
 function modelPanel(rs) {
-  const per = (P.personal && (P.personal[state.baseline] || P.personal.overall)) || null;
+  const per = (P.personal[state.baseline] || {})[state.win] || (P.personal.overall || {})[WINDOWS[WINDOWS.length - 1]] || null;
   const box = document.getElementById('modelPanel');
   if (!per || !per.axes) {
     box.innerHTML = '<div class="note">' + (per && per.unavailable ? per.unavailable
@@ -769,7 +831,29 @@ function modelPanel(rs) {
     'Treat the ordering of rows as the hint, and any single bold row as a hypothesis to collect more games against.';
 }
 
-// ---------- baseline / role controls ----------
+// ---------- window / baseline / role controls ----------
+function windowBtns() {
+  const box = document.getElementById('windowBtns');
+  box.innerHTML = '';
+  WINDOWS.forEach(wk => {
+    const b = document.createElement('button');
+    const n = +wk, total = P.games.length;
+    b.className = 'btn' + (state.win === wk ? ' on' : '');
+    b.textContent = n >= total ? 'all ' + total : 'last ' + n;
+    b.title = 'score only the most recent ' + (n >= total ? total : n) + ' games';
+    b.onclick = () => { state.win = wk; state.role = 'ALL'; render(); };
+    box.appendChild(b);
+  });
+  const sp = windowSpan();
+  document.getElementById('windowNote').innerHTML =
+    'Window ' + sp.from + ' \u2192 ' + sp.to + ' \u00b7 ' + sp.patches.length +
+    ' patch' + (sp.patches.length === 1 ? '' : 'es') +
+    (sp.patches.length ? ' (' + sp.patches[0] + (sp.patches.length > 1 ? '\u2013' + sp.patches[sp.patches.length - 1] : '') + ')' : '') +
+    (sp.patches.length > 2 ? ' <span class="lose">spans multiple metas \u2014 a tighter window is comparable only within its own patch</span>' : '') +
+    (P.meta.historyExhausted ? '<br>Riot returned the player\u2019s whole available ranked history.' : '') +
+    (P.meta.trimmedOlder ? '<br>' + P.meta.trimmedOlder + ' older stored games were not scored (--window).' : '');
+}
+
 function baselineBtns() {
   const box = document.getElementById('baselineBtns');
   const opts = [['overall', 'All ranks (whole corpus)']];
@@ -782,7 +866,8 @@ function baselineBtns() {
     b.onclick = () => { state.baseline = v; render(); };
     box.appendChild(b);
   });
-  const rolesInView = state.role === 'ALL' ? ROLE_ORDER.filter(r => P.roles[r]) : [state.role];
+  const counts = roleCounts();
+  const rolesInView = state.role === 'ALL' ? ROLE_ORDER.filter(r => counts[r]) : [state.role];
   const parts = rolesInView.map(r => {
     const g = groupFor(r);
     return r + ' n=' + g.n.toLocaleString() + (g.__key.includes('|') ? '' : ' (all ranks)');
@@ -796,12 +881,13 @@ function baselineBtns() {
 
 function roleBtns() {
   const box = document.getElementById('roleBtns');
+  const counts = roleCounts();
   box.innerHTML = '';
-  ['ALL'].concat(ROLE_ORDER.filter(r => P.roles[r])).forEach(r => {
+  ['ALL'].concat(ROLE_ORDER.filter(r => counts[r])).forEach(r => {
     const b = document.createElement('button');
     b.className = 'btn' + (state.role === r ? ' on' : '');
-    b.textContent = r === 'ALL' ? 'All roles (' + P.nGames + ')' :
-      r + ' ' + P.roles[r].games + 'g ' + Math.round(P.roles[r].wins / P.roles[r].games * 100) + '%W';
+    b.textContent = r === 'ALL' ? 'All roles (' + windowGames().length + ')' :
+      r + ' ' + counts[r].games + 'g ' + Math.round(counts[r].wins / counts[r].games * 100) + '%W';
     if (r !== 'ALL') b.style.borderColor = ROLE_COLORS[r] + '66';
     b.onclick = () => { state.role = r; render(); };
     box.appendChild(b);
@@ -993,7 +1079,7 @@ function syncSliders() {
 
 function methodText() {
   const c = P.corpus, pr = P.profile;
-  const per = (P.personal && (P.personal[state.baseline] || P.personal.overall)) || null;
+  const per = (P.personal[state.baseline] || {})[state.win] || null;
   document.getElementById('method').innerHTML =
     '<b>Baseline.</b> Every metric is z-scored and percentiled against ' + c.nRows.toLocaleString() +
     ' player-games from ' + c.nMatches.toLocaleString() + ' ' + c.region +
@@ -1030,7 +1116,7 @@ function methodText() {
 let tm = null;
 function render() {
   const rs = rows();
-  axisBtns(); baselineBtns(); roleBtns(); weightsBox(); syncSliders();
+  windowBtns(); axisBtns(); baselineBtns(); roleBtns(); weightsBox(); syncSliders();
   tiles(rs);
   modelPanel(rs);
   if (!rs.length) {
@@ -1061,6 +1147,8 @@ def main():
                     help="only build this player (repeatable)")
     ap.add_argument("--players-dir", type=Path, default=PLAYER_DIR)
     ap.add_argument("--ref", type=Path, default=REF_FILE)
+    ap.add_argument("--window", type=int, default=0,
+                    help="cap the scored games at the most recent N (0 = everything stored)")
     ap.add_argument("--no-html", action="store_true", help="print summary only")
     args = ap.parse_args()
 
@@ -1087,7 +1175,7 @@ def main():
 
     payloads = []
     for d in dirs:
-        p = player_payload(d, ref)
+        p = player_payload(d, ref, args.window)
         if p:
             print(f"[summary] {console_summary(p, ref)}")
             payloads.append(p)
