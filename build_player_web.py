@@ -785,6 +785,12 @@ def main():
     if args.slug:
         dirs = [d for d in dirs if d.name in set(args.slug)]
     if not dirs:
+        # still publish an empty index, so the landing page's "built reports"
+        # link is never a 404 before the first lookup
+        if not args.no_html:
+            PLAYERS_OUT.mkdir(parents=True, exist_ok=True)
+            (WEB_DIR / "player.js").write_text(APP_JS, encoding="utf-8")
+            _write_index({})
         raise SystemExit(
             f"no players found in {args.players_dir}. "
             f'Run: python collect_player.py "Name#TAG"')

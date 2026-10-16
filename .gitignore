@@ -4,6 +4,12 @@
 # data (regenerable via collect_matches.py; contains player PUUIDs)
 data/
 
+# generated player reports: publishing one is a deliberate act, because it puts a
+# named player's stats on a public site. Publish a specific report with
+#   git add -f web/players/<slug>.html web/players/index.html
+# (the offline-demo slug from make_offline_player.py must never go out)
+web/players/
+
 # python
 __pycache__/
 *.pyc

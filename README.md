@@ -165,13 +165,31 @@ many distinct players get pulled per hour. `collect_player.py` and the search bo
 `Name#TAG` plus a region, and the collector caches by player, so an hour of lookups costs about
 450 requests against a 100/2-min dev key.
 
-### Hosting
+### Publishing to GitHub Pages
 
- GitHub Pages from the branch root serves the landing page at
-`/`, reports at `/web/players/`, the explorer at `/web/index.html`. Looked-up games stay in
-gitignored `data/` (they contain PUUIDs). Letting *strangers* search arbitrary players would need
-a backend holding the key — Riot deliberately sends no CORS headers, so a static page cannot call
-the API itself — plus a production key for real traffic.
+The landing page (`index.html`), `web/index.html` (explorer), `web/reference.js` and
+`web/player.js` are committed, so Pages from the branch root serves the landing at `/`, the
+explorer at `/web/index.html`, and reports at `/web/players/`. **`web/players/` is gitignored on
+purpose**: a report puts a named player's stats on a public site, so publishing one is a
+deliberate command -
+
+```powershell
+python build_player_web.py --slug killed-cat
+git add -f web/players/killed-cat.html web/players/index.html web/players/registry.json
+```
+
+Looked-up games always stay in gitignored `data/` (they contain PUUIDs). Turning Pages on is a
+one-time repo setting (or `gh api -X POST repos/<you>/lolstats/pages`). Letting *strangers* search
+arbitrary players needs more than that: a host for `server.py` holding the key, a Riot
+**production** key for traffic that isn't just you, and per-IP throttling - Riot deliberately sends
+no CORS headers, which is precisely why a static page cannot do live lookup itself.
+
+### Dev tool
+
+`python make_offline_player.py` fabricates `data/players/offline-demo/` from the already
+collected corpus, with zero API calls, so scoring or template changes can be tested against a real
+40-game history. The Riot ID in it is invented and that report must never be published - another
+reason `web/players/` is ignored.
 
 ## Pipeline
 1. `collect_matches.py` — Riot API collector with rate limiting + checkpoints
