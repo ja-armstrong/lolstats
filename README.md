@@ -121,6 +121,15 @@ python build_player_web.py                                  # -> web/players/<sl
 - `build_player_web.py` scores each player against the baseline and emits static HTML. No
   backend, and no API key anywhere in the page.
 
+### Live API notes (found by looking up a real account)
+
+| Quirk | Handling |
+|---|---|
+| League-V4 entries put the division in **`rank`**, not `division`, for tiers below Apex (e.g. `tier: DIAMOND, rank: IV`). For Master+ `rank` is the numeric ladder position instead. | `find_solo_rank()` reads `division` first, then `rank` only if it is not a number, so a Challenger position of `250` can never be printed as a division. |
+| `riotIdTagLine` is masked to `null` and `summonerName` is `""` for other participants; only `riotIdGameName` comes back. | Collected games are half-addressable by name; lookup always needs the tag from the person asking. Identity resolution in the pipeline is by **puuid**, never by name. |
+| `challenges` still carries `soloKills` and `killParticipation` (126 keys in a 2026 game), so `slim_match()` keeps working. | Verified against a live match rather than assumed. |
+| Match IDs are now `NA1_5653773454`-style, not GUIDs. | The pipeline stores IDs as opaque strings, so both formats coexist in `data/`. |
+
 | Panel | Method, and why |
 |---|---|
 | Metric percentiles | Every metric is percentiled **per game, inside the role played in that game**, then averaged. A jungler's CS/min is never judged against ADC CS. Averaging per-game ranks rather than taking the percentile of the average stops one 25-0 stomp from carrying the number (the orange tick shows how far apart those two are). |

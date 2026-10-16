@@ -18,10 +18,13 @@ function groupFor(role) {
   }
   return REF.groups[role];
 }
-function pct(q, v) {   // value -> percentile, by interpolating the quantile grid
+function pct(q, v) {   // value -> percentile, interpolating the quantile grid
   const n = q.length, step = 100 / (n - 1);
-  if (v <= q[0]) return 0;
-  if (v >= q[n - 1]) return 100;
+  // Ties get mid-rank, exactly like the Mann-Whitney AUC in build_web.py. Without
+  // this, a metric that is 0 in 58% of peer games (solo kills) reports every tied
+  // game as 0% and drags the averaged percentile down to nonsense.
+  if (v <= q[0]) { let h = 0; while (h + 1 < n && q[h + 1] === q[0]) h++; return h ? h * step / 2 : 0; }
+  if (v >= q[n - 1]) { let l = n - 1; while (l - 1 >= 0 && q[l - 1] === q[n - 1]) l--; return 100 - (n - 1 - l) * step / 2; }
   let i = 1; while (i < n && v > q[i]) i++;
   const a = q[i - 1], b = q[i];
   return (i - 1) * step + (b > a ? step * (v - a) / (b - a) : 0);
@@ -190,14 +193,20 @@ function metricBars(rs) {
     }
     const aggP = den ? num / den : 50;
     const mine = avg(rs.map(r => r.g.raw[i]));
+    // flag metrics where a big block of peers is tied at one value (solo kills,
+    // wards killed): the percentile then says less than the tie share does
+    const qq = grp.m[m.key].q; let tie = 0;
+    while (tie + 1 < qq.length && qq[tie + 1] === qq[0]) tie++;
+    const tiePct = tie * (100 / (qq.length - 1));
     html += '<div class="mrow">' +
       '<div>' + m.label + (m.sign < 0 ? ' <span class="note">\u2193</span>' : '') + '</div>' +
       '<div class="pbar" title="average of per-game percentiles ' + pc(mean) +
         '; percentile of your average value ' + pc(aggP) + '">' +
         '<span style="width:' + mean.toFixed(1) + '%"></span>' +
         '<i style="left:' + aggP.toFixed(1) + '%"></i><em>' + pc(mean) + '</em></div>' +
-      '<div class="vals">you ' + nf(mine, 2) + ' \u00b7 peers ' + nf(grp.m[m.key].q[10], 2) + '</div>' +
-      '</div>';
+      '<div class="vals">you ' + nf(mine, 2) + ' \u00b7 peers ' + nf(qq[10], 2) +
+      (tiePct >= 10 ? ' <span class="note">(' + Math.round(tiePct) + '% tied at ' + nf(qq[0], 2) + ')</span>' : '') +
+      '</div></div>';
   });
   box.innerHTML = html || '<div class="note">no games in this filter</div>';
 }
@@ -336,7 +345,8 @@ function methodText() {
     'Values are trimmed to the corpus 0.1%/99.9% range before scoring.<br>' +
     '<b>Score.</b> Equal-weight mean of the 14 signed z-scores (deaths and death share count negatively). ' +
     'Percentiles are computed per game inside the role played in that game, then averaged \u2014 averaging raw stats first ' +
-    'would let one 25-0 stomp dominate the result.<br>' +
+    'would let one 25-0 stomp dominate the result. Ties are given mid-rank (the same Mann-Whitney convention the ' +
+    'AUC code uses), so a metric that is zero in most peer games does not report every tied game as 0%.<br>' +
     '<b>Teammate differential.</b> Own score minus the mean of your teammates\u2019 scores (same baseline), so team strength ' +
     'cancels out; this is the within-team signal the project\u2019s Model C uses.<br>' +
     '<b>Caveats worth knowing.</b> (1) End-of-game box scores partly <i>re-encode</i> the win \u2014 stomps inflate everything, ' +

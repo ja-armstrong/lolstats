@@ -122,7 +122,10 @@ class RiotAPI:
                     "Dev keys expire 24h after they are created - request a new one at "
                     "https://developer.riotgames.com/ and update RIOT_API_KEY in .env."
                 )
-            # 400 -> bad request/params
+            if resp.status_code == 400:
+                # e.g. legacy-format puuids from the 2025 corpus, which current
+                # Account-V1 rejects; surface Riot's own wording instead of a bare 400
+                raise RuntimeError(f"400 bad request from {url}: {resp.text[:180]}")
             resp.raise_for_status()
         return None
 
@@ -182,7 +185,10 @@ PARTICIPANT_FIELDS = [
     "totalMinionsKilled", "neutralMinionsKilled", "goldEarned",
     "totalDamageDealtToChampions", "visionScore",
     "wardsPlaced", "wardsKilled",
-    # kept so collected games are addressable by name later, not only by puuid
+    # Riot ID fields as far as match-v5 discloses them: riotIdGameName comes back,
+    # riotIdTagLine is masked to None for other players, and summonerName is now "".
+    # Storing the game name still makes collected games half-addressable by name;
+    # any lookup needs the tag from whoever is asking.
     "riotIdGameName", "riotIdTagLine",
 ]
 

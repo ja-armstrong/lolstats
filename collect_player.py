@@ -64,19 +64,30 @@ def existing_ids(path: Path) -> set[str]:
 
 
 def find_solo_rank(entries, summoner_id: str, api: RiotAPI):
-    """Prefer league-v4 by-puuid; fall back to the by-summoner route if absent."""
+    """Prefer league-v4 by-puuid; fall back to the by-summoner route if absent.
+
+    Schema note: division I-IV used to live in `division`; current responses put
+    it in `rank` for tiers below Apex, while for Apex tiers `rank` is the numeric
+    ladder position. Read both, and never treat a number as a division.
+    """
     if entries is None and summoner_id:
         entries = api.league_entries_by_summoner(summoner_id)
     for e in entries or []:
         if e.get("queueType") == SOLO_LEAGUE:
+            tier = e.get("tier")
+            division = e.get("division")
+            rank_field = e.get("rank")
+            if not division and rank_field not in (None, "") and not str(rank_field).isdigit():
+                division = rank_field
             return {
-                "tier": e.get("tier"), "division": e.get("division"),
+                "tier": tier, "division": division,
                 "leaguePoints": e.get("leaguePoints"),
                 "wins": e.get("wins"), "losses": e.get("losses"),
-                "rank": e.get("rank"),          # present for apex tiers
+                "rank": rank_field,           # numeric ladder position in Apex
                 "veteran": bool(e.get("veteran")),
                 "inactive": bool(e.get("inactive")),
                 "freshBlood": bool(e.get("freshBlood")),
+                "hotStreak": bool(e.get("hotStreak")),
             }
     return None
 
@@ -119,7 +130,12 @@ def collect(game_name: str, tag_line: str, region: str = "na1", n: int = 40,
     report("profile")
     summ = api.summoner_by_puuid(puuid) or {}
     rank = find_solo_rank(api.league_entries_by_puuid(puuid), summ.get("id"), api)
-    tier_label = f"{rank['tier']}_{rank['division']}" if rank else "UNRANKED"
+    if rank is None:
+        tier_label = "UNRANKED"
+    elif rank.get("division"):
+        tier_label = f"{rank['tier']}_{rank['division']}"
+    else:                                    # apex tiers carry no division
+        tier_label = rank["tier"]
 
     report("matchlist")
     ids = api.match_ids(puuid, count=n, queue=SOLO_QUEUE) or []
