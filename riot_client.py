@@ -85,11 +85,21 @@ class RiotAPI:
         """GET an endpoint. regional=True uses the routing cluster (match-v5)."""
         host = self.route if regional else self.region
         url = self._url(host, path)
+        net_fails = 0
         for attempt in range(1, max_retries + 1):
             self.limiter.wait()
             try:
                 resp = self.session.get(url, params=params, timeout=30)
-            except requests.RequestException:
+                net_fails = 0
+            except requests.RequestException as e:
+                # Three in a row is an outage/proxy problem, not a blip: fail the
+                # call now instead of sleeping through 6 retries for every game.
+                net_fails += 1
+                if net_fails >= 3:
+                    raise RuntimeError(
+                        f"cannot reach {host}.api.riotgames.com "
+                        f"({type(e).__name__}: {e}). Gave up after 3 tries - "
+                        "that looks like a network/proxy issue, not Riot.")
                 time.sleep(2 * attempt)
                 continue
             self.calls_made += 1

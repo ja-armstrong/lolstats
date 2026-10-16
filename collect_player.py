@@ -4,13 +4,15 @@ Collect ONE player's recent ranked solo games, looked up by Riot ID (name#TAG).
     python collect_player.py "killed cat#NA1"
     python collect_player.py "SomeName#KR1" --region kr --n 60
 
-Writes, under data/players/<slug>/ (data/ is gitignored — it holds PUUIDs):
+Writes, under data/players/<slug>/ (data/ is gitignored - it holds PUUIDs):
   matches.jsonl   same compact schema as data/raw/matches.jsonl, so
                   prepare_features.load_matches() can parse it unchanged
   profile.json    puuid, Riot ID, level, icon, current rank, collection stats
 
 Re-running only fetches games that are not already on disk, so it is cheap to
-refresh a player before rebuilding their report.
+refresh a player before rebuilding their report. The collect() function is
+also what server.py drives for the in-browser lookup (it takes a progress
+callback for the UI).
 
 Dev keys allow 100 requests / 2 min: a first 40-game pull is ~42 requests
 (roughly a minute of waiting); refreshes are ~2.
@@ -23,7 +25,7 @@ import sys
 import time
 from pathlib import Path
 
-from riot_client import RiotAPI, slim_match
+from riot_client import RiotAPI, ROUTES, slim_match
 
 ROOT = Path(__file__).resolve().parent
 PLAYER_DIR = ROOT / "data" / "players"
@@ -39,7 +41,7 @@ def split_riot_id(text: str, default_tag: str | None) -> tuple[str, str]:
         name, _, tag = text.rpartition("#")
         return name.strip(), tag.strip()
     if not default_tag:
-        sys.exit("Give a Riot ID like 'Name#TAG', or pass --tag (e.g. --tag NA1).")
+        raise ValueError("Give a Riot ID like 'Name#TAG', or pass a tag (--tag NA1).")
     return text, default_tag.strip()
 
 
@@ -79,46 +81,50 @@ def find_solo_rank(entries, summoner_id: str, api: RiotAPI):
     return None
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("riot_id", help="Riot ID, e.g. \"killed cat#NA1\"")
-    ap.add_argument("--tag", default=None, help="tag line, if riot_id has no #TAG")
-    ap.add_argument("--region", default="na1",
-                    help="shard: na1 br1 la1 la2 euw1 eun1 tr1 ru kr jp1 oc1 ph2 sg2 th2 tw2 vn2")
-    ap.add_argument("--n", type=int, default=40, help="recent ranked solo games to keep (max 100)")
-    ap.add_argument("--out", type=Path, default=None, help="override the output folder")
-    args = ap.parse_args()
+def collect(game_name: str, tag_line: str, region: str = "na1", n: int = 40,
+            out_dir: Path | None = None, progress=None) -> dict:
+    """Resolve a Riot ID, fetch that player's ranked solo games, return profile.
 
-    game_name, tag_line = split_riot_id(args.riot_id, args.tag)
-    api = RiotAPI(region=args.region)
+    progress(stage: str, **info) is called at each phase so server.py can show
+    what is happening in the browser.
+    """
+    def report(stage, **info):
+        if progress:
+            try:
+                progress(stage, **info)
+            except Exception:
+                pass
+
+    region = region.lower()
+    if region not in ROUTES:
+        raise ValueError(f"unknown region '{region}'. Valid: {', '.join(sorted(ROUTES))}")
+    n = max(1, min(int(n), 100))
+
+    api = RiotAPI(region=region)
     slug = slugify(game_name)
-    out_dir = args.out or PLAYER_DIR / slug
+    out_dir = out_dir or PLAYER_DIR / slug
     out_dir.mkdir(parents=True, exist_ok=True)
     raw_file = out_dir / "matches.jsonl"
 
-    print(f'[lookup] "{game_name}#{tag_line}" on {api.region} ({api.route}) ...')
+    report("resolve", region=region, riotId=f"{game_name}#{tag_line}")
     acct = api.account_by_riot_id(game_name, tag_line)
     if not acct or not acct.get("puuid"):
-        sys.exit(
-            f"[lookup] no account found. Check the name/tag spelling and the region "
-            f"(--region). Riot IDs are shard-specific: '{game_name}#{tag_line}' exists "
-            f"only in {args.region} if it exists at all."
+        raise LookupError(
+            f"no account found for '{game_name}#{tag_line}' in {region}. "
+            "Check the name/tag spelling and the region: Riot IDs are shard-specific, "
+            "so a NA1 account looks 'not found' when queried on euw1."
         )
     puuid = acct["puuid"]
-    print(f"[lookup] puuid={puuid[:12]}...  summoner level/icon ...")
 
+    report("profile")
     summ = api.summoner_by_puuid(puuid) or {}
     rank = find_solo_rank(api.league_entries_by_puuid(puuid), summ.get("id"), api)
     tier_label = f"{rank['tier']}_{rank['division']}" if rank else "UNRANKED"
-    print(f"[lookup] rank: {tier_label}"
-          + (f" ({rank['leaguePoints']} LP, {rank['wins']}-{rank['losses']})" if rank else ""))
 
-    ids = api.match_ids(puuid, count=min(max(args.n, 1), 100), queue=SOLO_QUEUE) or []
-    print(f"[matchlist] {len(ids)} ranked solo game ids returned")
-
+    report("matchlist")
+    ids = api.match_ids(puuid, count=n, queue=SOLO_QUEUE) or []
     have = existing_ids(raw_file)
     todo = [m for m in ids if m not in have]
-    print(f"[collect] {len(have)} already on disk, {len(todo)} to fetch")
 
     t0, got, skipped = time.time(), 0, {"surrender": 0, "short": 0, "other": 0}
     with raw_file.open("a", encoding="utf-8") as f:
@@ -142,10 +148,9 @@ def main():
                 continue
             f.write(json.dumps(slim) + "\n")
             got += 1
-            if i % 10 == 0:
-                el = time.time() - t0
-                print(f"[collect] {i}/{len(todo)} fetched "
-                      f"({got} kept, {api.calls_made} api calls, {el:.0f}s)")
+            if i % 5 == 0 or i == len(todo):
+                report("collect", done=i, total=len(todo), kept=got,
+                       seconds=round(time.time() - t0))
 
     stored = existing_ids(raw_file)
     profile = {
@@ -163,24 +168,59 @@ def main():
         "tier": tier_label,
         "queue": SOLO_QUEUE,
         "gamesStored": len(stored),
-        "requestedN": args.n,
+        "requestedN": n,
         "skipped": skipped,
         "apiCalls": api.calls_made,
         "collectedAt": int(time.time()),
         "collectedAtIso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     (out_dir / "profile.json").write_text(json.dumps(profile, indent=2), encoding="utf-8")
+    report("done", games=profile["gamesStored"], fetched=got, skipped=skipped)
+    return profile
 
-    print(f"\n[done] {profile['gamesStored']} games in {raw_file}")
-    if skipped:
-        print(f"[done] skipped: {skipped}")
-    print(f"[next] python build_player_web.py --slug {slug}")
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("riot_id", help="Riot ID, e.g. \"killed cat#NA1\"")
+    ap.add_argument("--tag", default=None, help="tag line, if riot_id has no #TAG")
+    ap.add_argument("--region", default="na1",
+                    help="shard: " + " ".join(sorted(ROUTES)))
+    ap.add_argument("--n", type=int, default=40, help="recent ranked solo games to keep (max 100)")
+    ap.add_argument("--out", type=Path, default=None, help="override the output folder")
+    args = ap.parse_args()
+
+    try:
+        game_name, tag_line = split_riot_id(args.riot_id, args.tag)
+    except ValueError as e:
+        sys.exit(f"[error] {e}")
+
+    def progress(stage, **info):
+        if stage == "resolve":
+            print(f'[lookup] {info["riotId"]} on {info["region"]} ...')
+        elif stage == "profile":
+            print("[lookup] summoner + rank ...")
+        elif stage == "matchlist":
+            print("[matchlist] requesting recent ranked solo ids ...")
+        elif stage == "collect" and info["done"] % 10 == 0:
+            print(f'[collect] {info["done"]}/{info["total"]} fetched '
+                  f'({info["kept"]} kept, {info["seconds"]}s)')
+        elif stage == "done":
+            print(f"[done] {info['games']} games stored "
+                  f"({info['fetched']} fetched this run, skipped {info['skipped']})")
+
+    try:
+        profile = collect(game_name, tag_line, args.region, args.n,
+                          out_dir=args.out, progress=progress)
+    except (RuntimeError, LookupError, ValueError) as e:
+        sys.exit(f"[error] {e}")
+
+    print(f"[done] data/players/{profile['slug']}/ "
+          f"(rank {profile['tier']}, {profile['apiCalls']} api calls)")
+    print(f"[next] python build_player_web.py --slug {profile['slug']}")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except RuntimeError as e:
-        sys.exit(f"[error] {e}")
     except KeyboardInterrupt:
         sys.exit("\n[stopped] games fetched so far are already saved; re-run to continue.")

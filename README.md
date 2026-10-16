@@ -135,7 +135,39 @@ which is why the differential panel is the one to trust; the baseline is NA rank
 other regions inherit NA's playstyle; percentiles describe association with winning in the
 corpus, not causal carry value.
 
-Hosting: `web/` is committed, so GitHub Pages from the branch root serves the landing page at
+### Live lookup in the browser (`server.py`)
+
+```powershell
+python server.py            # -> http://127.0.0.1:8765/search
+```
+
+Static pages cannot do live lookup: Riot deliberately omits CORS headers so that a key can never
+be shipped in browser JS. `server.py` is the small backend that holds the key - stdlib
+`http.server` only, nothing to install, one worker thread so Riot's 100-requests/2-min window is
+never raced, and it calls the same `collect()` / `write_page()` functions as the CLI.
+
+| Route | |
+|---|---|
+| `/search` | Riot ID box: region, game count, force-refresh; polls while the worker fetches, then opens the report |
+| `/players/<slug>` | a report; `/players/` lists everything built |
+| `/explorer`, `/` | corpus role-impact explorer, landing page |
+| `/api/health`, `/api/players`, `/api/lookup?riotId=Name#TAG&region=na1&n=40&force=1` | JSON used by the search page |
+
+A fresh 40-game lookup is ~42 requests, so it takes about a minute; results are cached in
+`data/players/<slug>/` and re-served for `--ttl` seconds (default 900), which makes a repeat
+search instant and free. If the refresh fails mid-lookup (expired key, rate limited) you still get
+the last snapshot with a warning instead of an error page.
+
+It binds `127.0.0.1` by default. `--host 0.0.0.0` hands your key's rate budget to everyone who can
+reach the port and shows every built report, so it needs a real deployment story: a Riot
+**production** key for traffic that isn't just you, plus per-IP throttling and some limit on how
+many distinct players get pulled per hour. `collect_player.py` and the search box both accept
+`Name#TAG` plus a region, and the collector caches by player, so an hour of lookups costs about
+450 requests against a 100/2-min dev key.
+
+### Hosting
+
+ GitHub Pages from the branch root serves the landing page at
 `/`, reports at `/web/players/`, the explorer at `/web/index.html`. Looked-up games stay in
 gitignored `data/` (they contain PUUIDs). Letting *strangers* search arbitrary players would need
 a backend holding the key — Riot deliberately sends no CORS headers, so a static page cannot call
@@ -158,6 +190,8 @@ the API itself — plus a production key for real traffic.
    (`reference.json` for Python, `reference.js` for the browser)
 9. `collect_player.py` + `build_player_web.py` — one player by Riot ID, scored
    against those baselines as a static report page
+10. `server.py` — the same lookup as a local web app with a search box, so the
+    API key stays server-side (Riot sends no CORS headers on purpose)
 
 ## Assumptions audit (what we checked and what we found)
 
@@ -208,6 +242,7 @@ python build_reference.py                     # re-run whenever the corpus chang
 python collect_player.py "killed cat#NA1" --region na1 --n 40
 python build_player_web.py                    # all players, or --slug <name>
 python build_player_web.py --no-html          # print the summary only
+python server.py                              # search box -> http://127.0.0.1:8765/search
 ```
 You can run steps 2+ at any time on partial data.
 

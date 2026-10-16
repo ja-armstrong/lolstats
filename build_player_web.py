@@ -163,36 +163,69 @@ def console_summary(payload: dict, ref: dict) -> str:
             f"vs teammates {np.mean(outs):+.2f}")
 
 
-def write_pages(payloads: list[dict]) -> None:
+def write_page(payload: dict) -> dict:
+    """Write one report page, update the registry, rebuild the reports index.
+
+    Registry-driven so building a single player never drops the others from
+    web/players/index.html (this is what server.py calls after each lookup).
+    """
     PLAYERS_OUT.mkdir(parents=True, exist_ok=True)
     (WEB_DIR / "player.js").write_text(APP_JS, encoding="utf-8")
+    prof = payload["profile"]
+    rank = prof.get("soloRank") or {}
+    data = json.dumps(payload, separators=(",", ":"))
+    html = (PAGE_TEMPLATE
+            .replace("__TITLE__", f"{prof['riotId']} - LoL player report")
+            .replace("__PLAYER__", data))
+    out = PLAYERS_OUT / f"{payload['slug']}.html"
+    out.write_text(html, encoding="utf-8")
+    print(f"[web] {out} ({out.stat().st_size / 1024:.0f} KB)")
 
-    cards = []
-    for p in sorted(payloads, key=lambda x: x["slug"]):
-        prof = p["profile"]
-        rank = prof.get("soloRank") or {}
-        html = (PAGE_TEMPLATE
-                .replace("__TITLE__", f"{prof['riotId']} - LoL player report")
-                .replace("__PLAYER__", json.dumps(p, separators=(",", ":"))))
-        out = PLAYERS_OUT / f"{p['slug']}.html"
-        out.write_text(html, encoding="utf-8")
-        cards.append({
-            "slug": p["slug"], "riotId": prof["riotId"],
-            "rank": (f"{rank.get('tier', '')} {rank.get('division', '')}".strip() or "Unranked"),
-            "region": prof.get("region"), "games": p["nGames"],
-            "wr": round(p["nWins"] / p["nGames"] * 100, 1),
-            "updated": prof.get("collectedAtIso", "")[:10],
-        })
-        print(f"[web] {out} ({out.stat().st_size / 1024:.0f} KB)")
+    reg_path = PLAYERS_OUT / "registry.json"
+    registry = {}
+    if reg_path.exists():
+        try:
+            registry = json.loads(reg_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            registry = {}
+    registry[payload["slug"]] = {
+        "slug": payload["slug"], "riotId": prof["riotId"],
+        "rank": (f"{rank.get('tier', '')} {rank.get('division', '')}".strip() or "Unranked"),
+        "region": prof.get("region"), "games": payload["nGames"],
+        "wr": round(payload["nWins"] / payload["nGames"] * 100, 1),
+        "updated": prof.get("collectedAtIso", "")[:10],
+    }
+    registry = {k: v for k, v in registry.items()
+                if (PLAYERS_OUT / f"{k}.html").exists()}
+    reg_path.write_text(json.dumps(registry, indent=2, sort_keys=True), encoding="utf-8")
+    _write_index(registry)
+    return registry[payload["slug"]]
 
+
+def _write_index(registry: dict) -> None:
     rows = "\n".join(
         f'<tr><td><a href="{c["slug"]}.html">{c["riotId"]}</a></td>'
         f'<td>{c["rank"]}</td><td>{c["region"]}</td><td>{c["games"]}</td>'
         f'<td>{c["wr"]}%</td><td>{c["updated"]}</td></tr>'
-        for c in cards)
+        for _, c in sorted(registry.items(), key=lambda kv: kv[1]["slug"]))
     (PLAYERS_OUT / "index.html").write_text(
-        INDEX_TEMPLATE.replace("__ROWS__", rows), encoding="utf-8")
-    print(f"[web] {PLAYERS_OUT / 'index.html'} ({len(cards)} reports)")
+        INDEX_TEMPLATE
+        .replace("__ROWS__", rows or
+                 '<tr><td colspan="6">No reports yet &mdash; run '
+                 '<code>python collect_player.py "Name#TAG"</code>, or start '
+                 '<code>python server.py</code> and search in the browser.</td></tr>')
+        .replace("__SEARCH__", SEARCH_HINT), encoding="utf-8")
+    print(f"[web] {PLAYERS_OUT / 'index.html'} ({len(registry)} reports)")
+
+
+SEARCH_HINT = (
+    '<p class="sub">Static hosting: these pages are generated locally. '
+    'Run <code>python server.py</code> for the in-browser search box.</p>')
+
+
+def write_pages(payloads: list[dict]) -> None:
+    for p in sorted(payloads, key=lambda x: x["slug"]):
+        write_page(p)
 
 
 PAGE_TEMPLATE = r"""<!DOCTYPE html>
@@ -344,7 +377,9 @@ a{color:#4f9cf9;text-decoration:none}.sub{color:#8b93a7;font-size:12.5px;margin-
 <h1>LoL player reports</h1>
 <div class="sub">Single-player lookups scored against the collected ranked-solo corpus.
 Built by <code>build_player_web.py</code> &middot; also see the
-<a href="../index.html">role impact explorer</a>.</div>
+<a href="../index.html">role impact explorer / home</a> and the
+<a href="../search.html">player search</a>.</div>
+__SEARCH__
 <table><tr><th>player</th><th>rank</th><th>region</th><th>games</th><th>win rate</th><th>updated</th></tr>
 __ROWS__
 </table>
@@ -458,7 +493,7 @@ function header() {
     (P.meta.trimmedOlder ? ' (of ' + (P.nGames + P.meta.trimmedOlder) + ' stored)' : '') +
     ' \u00b7 collected ' +
     (pr.collectedAtIso || '').slice(0, 10) + ' \u00b7 <a href="index.html">all reports</a> \u00b7 ' +
-    '<a href="../index.html">corpus explorer</a></span>';
+    '<a href="../index.html">home / explorer</a></span>';
   if (pr.profileIconId != null)
     document.getElementById('avatar').innerHTML =
       '<img src="https://ddragon.leagueoflegends.com/cdn/' + cdn + '/img/profileicon/' + pr.profileIconId + '.png" alt="">';

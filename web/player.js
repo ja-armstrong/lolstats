@@ -105,7 +105,7 @@ function header() {
     (P.meta.trimmedOlder ? ' (of ' + (P.nGames + P.meta.trimmedOlder) + ' stored)' : '') +
     ' \u00b7 collected ' +
     (pr.collectedAtIso || '').slice(0, 10) + ' \u00b7 <a href="index.html">all reports</a> \u00b7 ' +
-    '<a href="../index.html">corpus explorer</a></span>';
+    '<a href="../index.html">home / explorer</a></span>';
   if (pr.profileIconId != null)
     document.getElementById('avatar').innerHTML =
       '<img src="https://ddragon.leagueoflegends.com/cdn/' + cdn + '/img/profileicon/' + pr.profileIconId + '.png" alt="">';
