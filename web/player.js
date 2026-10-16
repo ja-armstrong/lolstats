@@ -13,16 +13,26 @@ const SIGNS = {}; METS.forEach(m => SIGNS[m.key] = m.sign);
 const AX = Object.fromEntries(REF.axes.map(a => [a.key, a]));
 const AXLBL = Object.fromEntries(REF.axes.map(a => [a.key, a.label]));
 const MI = {}; MK.forEach((k, i) => MI[k] = i);
-const state = { baseline: P.bandAvailable ? 'band' : 'overall', role: 'ALL',
-                axis: 'C', w: Object.assign({}, DEF_W), custom: false,
-                win: (P.windows || []).slice(-1)[0] || String(P.nGames) };
 for (const k in REF.groups) REF.groups[k].__key = k;
+const state = { baseline: P.bandAvailable ? 'band' : 'overall', role: 'ALL',
+                axis: 'C', w: Object.assign({}, DEF_W), custom: false, close: false,
+                win: (P.windows || []).slice(-1)[0] || String(P.nGames) };
 
 // ---- recency window: deep history crosses patches and old ranks ----
+const CLOSE_MIN = (P.meta && P.meta.closeMin) || 32;
 const WINDOWS = P.windows || [String(P.nGames)];
-function windowGames() {
+function fitKey() { return state.win + (state.close ? 'c' : ''); }
+function pickFit(which) {
+  const byWin = P.personal[which] || {};
+  return byWin[fitKey()] || byWin[state.win] || null;
+}
+function hasCloseFit() {
+  return !!((P.personal[state.baseline] || {})[state.win + 'c']);
+}function windowGames() {
   const n = +state.win;
-  return n >= P.games.length ? P.games : P.games.slice(-n);
+  let gs = n >= P.games.length ? P.games : P.games.slice(-n);
+  if (state.close) gs = gs.filter(g => g.min >= CLOSE_MIN);
+  return gs;
 }
 function roleCounts() {
   const c = {};
@@ -166,8 +176,8 @@ function header() {
   bits.push('level ' + (pr.summonerLevel ?? '?'));
   bits.push((pr.region || '').toUpperCase());
   document.getElementById('pmeta').innerHTML = bits.join(' &nbsp;\u00b7&nbsp; ') +
-    '<br><span style="font-size:12px">Last ' + P.nGames + ' ranked solo games' +
-    (P.meta.trimmedOlder ? ' (of ' + (P.nGames + P.meta.trimmedOlder) + ' stored)' : '') +
+    '<br><span style="font-size:12px">' + P.nGames + ' ranked solo games on file' +
+    (P.meta.trimmedOlder ? ' (' + P.meta.trimmedOlder + ' older ones not scored)' : '') +
     ' \u00b7 collected ' +
     (pr.collectedAtIso || '').slice(0, 10) + ' \u00b7 <a href="index.html">all reports</a> \u00b7 ' +
     '<a href="../index.html">home / explorer</a></span>';
@@ -218,7 +228,7 @@ function axisBtns() {
 }
 
 function modelPanel(rs) {
-  const per = (P.personal[state.baseline] || {})[state.win] || (P.personal.overall || {})[WINDOWS[WINDOWS.length - 1]] || null;
+  const per = pickFit(state.baseline) || pickFit('overall');
   const box = document.getElementById('modelPanel');
   if (!per || !per.axes) {
     box.innerHTML = '<div class="note">' + (per && per.unavailable ? per.unavailable
@@ -244,7 +254,8 @@ function modelPanel(rs) {
     'is <b>' + nf(ax.cosine, 2) + '</b> (1 = you win by doing exactly what your role wins by). ' +
     'Does each actually predict <i>your</i> wins? AUC on your ' + per.n + ' ' + per.role + ' games: ' +
     'published weights <b>' + nf(ax.aucPop, 3) + ' \u00b1' + nf(ax.aucPopSe, 3) + '</b>, ' +
-    'weights fitted to you, leave-one-out <b>' + nf(ax.aucMine, 3) + ' \u00b1' + nf(ax.aucMineSe, 3) + '</b>. ' +
+    'weights fitted to you, ' + (ax.cv || 'leave-one-out') + ' <b>' + nf(ax.aucMine, 3) +
+    ' \u00b1' + nf(ax.aucMineSe, 3) + '</b>. ' +
     (state.axis === 'equal' ? 'Here "published" means the neutral \u00b11 signs, which were never fitted to winning. ' : '') +
     (state.axis === 'A' ? 'Model A\u2019s AUC is inflated on your games for the same reason it is in the corpus: box scores re-encode stomps. ' : '') +
     'Read the gap against the \u00b1SE: with a few dozen games a personal edge usually is not distinguishable, and ' +
@@ -295,18 +306,37 @@ function windowBtns() {
     b.className = 'btn' + (state.win === wk ? ' on' : '');
     b.textContent = n >= total ? 'all ' + total : 'last ' + n;
     b.title = 'score only the most recent ' + (n >= total ? total : n) + ' games';
-    b.onclick = () => { state.win = wk; state.role = 'ALL'; render(); };
+    b.onclick = () => {
+      state.win = wk; state.role = 'ALL';
+      if (state.close && !((P.personal[state.baseline] || {})[wk + 'c'])) state.close = false;
+      render();
+    };
     box.appendChild(b);
   });
+  const t = document.createElement('button');
+  const wn = +state.win;
+  const base = wn >= P.games.length ? P.games : P.games.slice(-wn);
+  const closeCount = base.filter(g => g.min >= CLOSE_MIN).length;
+  t.className = 'btn' + (state.close ? ' on' : '');
+  t.textContent = state.close
+    ? 'close games only (\u2265' + CLOSE_MIN + 'm) \u00b7 ' + windowGames().length + ' games'
+    : 'all lengths \u00b7 ' + closeCount + ' games \u2265' + CLOSE_MIN + 'm';
+  t.title = 'Restrict to games \u2265 ' + CLOSE_MIN + ' minutes: analyze_rigor.py\u2019s stomp-robustness cut. ' +
+    'End-of-game stats partly re-encode winning, so short blowouts inflate every "you vs peers" number.';
+  t.onclick = () => { state.close = !state.close; state.role = 'ALL'; render(); };
+  if (!hasCloseFit()) {
+    t.disabled = true;
+    t.title = 'not enough games \u2265 ' + CLOSE_MIN + ' min in this window for a separate fit';
+  }
+  box.appendChild(t);
   const sp = windowSpan();
   document.getElementById('windowNote').innerHTML =
     'Window ' + sp.from + ' \u2192 ' + sp.to + ' \u00b7 ' + sp.patches.length +
     ' patch' + (sp.patches.length === 1 ? '' : 'es') +
-    (sp.patches.length > 2 ? ' <span class="lose">(' + sp.patches.slice(-3).join(', ') +
-      ' \u2014 old metas are mixed in, prefer a tighter window)</span>'
-     : ' (' + sp.patches.join(', ') + ')') +
-    (P.meta.historyExhausted ? ' \u00b7 Riot returned the whole available history' : '') +
-    (P.meta.trimmedOlder ? ' \u00b7 ' + P.meta.trimmedOlder + ' older stored games not scored' : '');
+    (sp.patches.length ? ' (' + sp.patches[0] + (sp.patches.length > 1 ? '\u2013' + sp.patches[sp.patches.length - 1] : '') + ')' : '') +
+    (sp.patches.length > 2 ? ' <span class="lose">spans multiple metas \u2014 a tighter window is comparable only within its own patch</span>' : '') +
+    (P.meta.historyExhausted ? '<br>Riot returned the player\u2019s whole available ranked history.' : '') +
+    (P.meta.trimmedOlder ? '<br>' + P.meta.trimmedOlder + ' older stored games were not scored (--window).' : '');
 }
 
 function baselineBtns() {
@@ -453,8 +483,9 @@ function drawOut(rs) {
   document.getElementById('outNote').innerHTML =
     'You beat your own teammates in <b>' + better + ' of ' + rs.length + '</b> games \u00b7 average differential ' +
     (avg(rs.map(r => r.df)) >= 0 ? '<b class="win">' : '<b class="lose">') + nf(avg(rs.map(r => r.df)), 2) +
-    '</b> SD \u00b7 shading/line are the ' + role + ' peer distribution. Under Model C the score <i>is</i> ' +
-    'this differential, so the score panel and this one agree by construction (' + axName + ').';
+    '</b> SD \u00b7 shading/line are the ' + role + ' peer distribution. ' +
+    (state.close ? 'Only games \u2265 ' + CLOSE_MIN + ' min are in view. ' : '') +
+    'Under Model C the score <i>is</i> this differential, so the two panels agree here by construction (' + axName + ').';
 }
 
 // ---------- tables ----------
@@ -534,7 +565,7 @@ function syncSliders() {
 
 function methodText() {
   const c = P.corpus, pr = P.profile;
-  const per = (P.personal[state.baseline] || {})[state.win] || null;
+  const per = pickFit(state.baseline);
   document.getElementById('method').innerHTML =
     '<b>Baseline.</b> Every metric is z-scored and percentiled against ' + c.nRows.toLocaleString() +
     ' player-games from ' + c.nMatches.toLocaleString() + ' ' + c.region +
@@ -551,20 +582,24 @@ function methodText() {
     'mid-rank (the same Mann-Whitney convention the AUC code uses), so a metric that is zero in most peer games does not ' +
     'report every tied game as 0%.<br>' +
     '<b>Your weights vs your role\u2019s.</b> The comparison refits a win model on your games alone, ridge-shrunk ' +
-    '(C=' + (per.ridgeC || 0.2) + ') and scored leave-one-out so it cannot grade data it saw, with bootstrap SEs. ' +
-    'With ' + per.n + ' games at ' + per.role + ', its coefficients are noisy by construction: the gap to the role model ' +
-    'is a hypothesis about how you differ, not a measurement. Rows in the slope table are the better-powered version ' +
-    '(one stat at a time, both sides with SEs).<br>' +
+    '(C=' + (per ? per.ridgeC : 0.2) + ') and scored out-of-sample (' + (per && per.axes ? (per.axes[state.axis] || {}).cv : 'leave-one-out') +
+    ') so it cannot grade data it saw, with bootstrap SEs. ' +
+    (per && per.n ? 'On ' + per.n + ' games at ' + per.role + ' its coefficients are noisy by construction: the gap to the ' +
+     'role model is a hypothesis about how you differ, not a measurement. ' : '') +
+    'Rows in the slope table are the better-powered version (one stat at a time, both sides with SEs).<br>' +
     '<b>Teammate differential.</b> Own score minus the mean of your teammates\u2019 scores (same baseline), so team strength ' +
     'cancels out; this is the within-team signal the project\u2019s Model C uses.<br>' +
     '<b>Caveats worth knowing.</b> (1) End-of-game box scores partly <i>re-encode</i> the win \u2014 stomps inflate everything, ' +
-    'so read the differential panel and the distribution, not just the win-rate tile. ' +
-    '(2) ' + P.nGames + ' games is a small sample: a \u00b15 percentile change is noise. ' +
+    'so the close-games-only window and the differential panel are the ones to trust. ' +
+    '(2) ' + windowGames().length + ' games are in view right now (' + P.span.patches.length +
+    ' patches across the full store): a \u00b15 percentile change is still noise, and widening the window mixes metas. ' +
     '(3) Your band is your <i>current</i> tier (' + (pr.soloRank ? pr.soloRank.tier + ' ' + pr.soloRank.division : 'unranked') +
-    ') applied to all games shown. ' + '(4) The corpus is ' + c.region + ' solo queue, so cross-region comparisons inherit ' +
-    c.region + '-specific playstyle. ' + '(5) Percentiles describe association with winning in the corpus, not causal carry value.' +
+    ') applied to every game shown, so games at a lower rank are scored against today\u2019s peers. ' +
+    '(4) The corpus is ' + c.region + ' solo queue, so cross-region comparisons inherit ' +
+    c.region + '-specific playstyle. ' + '(5) Percentiles and win-slopes describe association, not causal carry value: a stat ' +
+    'that rises in losing streaks will look \u201cbad\u201d without ever causing anything.' +
     '<br><b>Refresh.</b> <code>python collect_player.py "' + pr.riotId + '" --region ' + (pr.region || 'na1') +
-    '</code> then <code>python build_player_web.py --slug ' + P.slug + '</code>';
+    ' --n 500</code> then <code>python build_player_web.py --slug ' + P.slug + '</code>';
 }
 
 // ---------- render ----------

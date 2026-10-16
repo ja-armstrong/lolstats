@@ -45,6 +45,8 @@ RIDGE_C = 0.2       # shrink hard: a fit on ~35 games is a contrast against the
 MIN_PERSONAL = 15   # games needed before a personal fit is reported at all
 AUC_BOOT = 400
 SEED = 42
+CLOSE_MIN = 32      # analyze_rigor.py's close-game cut: end-of-game stats stop
+                    # being a stomp re-encoding somewhere past half an hour
 
 DDAGON_VERSIONS_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
 DDAGON_CHAMPS_URL = "https://ddragon.leagueoflegends.com/cdn/{v}/data/en_US/champion.json"
@@ -82,6 +84,36 @@ def _z_row(vals, grp: dict) -> list[float]:
     return [(v - grp["m"][m]["mean"]) / grp["m"][m]["sd"] for m, v in zip(METRICS, vals)]
 
 
+def _oof_predictions(X: np.ndarray, y: np.ndarray, seed: int = SEED) -> tuple[np.ndarray, str]:
+    """Held-out predictions for a personal fit: LOO when cheap, 5-fold when not.
+
+    Leave-one-out on 400 games means 400 refits per weighting; out-of-fold folds give
+    the same honesty (nothing predicts the data that trained it) at 5 refits.
+    """
+    n = len(y)
+    pred = np.zeros(n)
+    if n <= 120:
+        for i in range(n):
+            keep = np.ones(n, bool)
+            keep[i] = False
+            if len(np.unique(y[keep])) < 2:
+                pred[i] = 0.0
+                continue
+            model = LogisticRegression(C=RIDGE_C, max_iter=2000).fit(X[keep], y[keep])
+            pred[i] = float(model.decision_function(X[i:i + 1])[0])
+        return pred, "leave-one-out"
+    folds = np.array_split(np.random.default_rng(seed).permutation(n), 5)
+    for fold in folds:
+        keep = np.ones(n, bool)
+        keep[fold] = False
+        if len(np.unique(y[keep])) < 2:
+            pred[fold] = 0.0
+            continue
+        model = LogisticRegression(C=RIDGE_C, max_iter=2000).fit(X[keep], y[keep])
+        pred[fold] = model.decision_function(X[fold])
+    return pred, "5-fold out-of-fold"
+
+
 def personal_fit(games: list[dict], ref: dict, band) -> dict:
     """Fit this player's own win model, then set it against their role's weights.
 
@@ -113,15 +145,7 @@ def personal_fit(games: list[dict], ref: dict, band) -> dict:
                  else np.array([ref["presets"][ax][role]["w"].get(f, 0.0) for f in feats], float))
         pop = X @ w_pop / len(feats)
 
-        loo = np.zeros(len(y))
-        for i in range(len(y)):
-            keep = np.ones(len(y), bool)
-            keep[i] = False
-            if len(np.unique(y[keep])) < 2:
-                loo[i] = pop[i]
-                continue
-            model = LogisticRegression(C=RIDGE_C, max_iter=2000).fit(X[keep], y[keep])
-            loo[i] = float(model.decision_function(X[i:i + 1])[0])
+        loo, cv = _oof_predictions(X, y)
         w_mine = LogisticRegression(C=RIDGE_C, max_iter=2000).fit(X, y).coef_[0]
 
         auc_pop, auc_mine = float(roc_auc_score(y, pop)), float(roc_auc_score(y, loo))
@@ -134,7 +158,7 @@ def personal_fit(games: list[dict], ref: dict, band) -> dict:
             b_mine.append(roc_auc_score(y[k], loo[k]))
         n1, n2 = float(np.linalg.norm(w_mine)), float(np.linalg.norm(w_pop))
         axes[ax] = {
-            "kind": spec["kind"], "nFeats": len(feats),
+            "kind": spec["kind"], "nFeats": len(feats), "cv": cv,
             "aucPop": round(auc_pop, 3), "aucPopSe": round(float(np.std(b_pop)), 3),
             "aucMine": round(auc_mine, 3), "aucMineSe": round(float(np.std(b_mine)), 3),
             "wPop": {f: round(float(w), 3) for f, w in zip(feats, w_pop)},
@@ -163,12 +187,20 @@ def personal_windows(games: list[dict], ref: dict, band) -> tuple[dict, list[str
     Deep history costs precision: a game from four patches ago at a lower rank is
     not the same player. So we fit on last-50, last-100 and everything, and let the
     page show how the slopes and AUCs move as the window widens.
+
+    Each window also gets a close-game variant ("<key>c", games >= 32 min): the
+    project's own stomp-robustness cut, which is the only honest way to read a
+    residual slope like "out-warding your teammates goes with losing".
     """
     n = len(games)
     cuts = sorted({min(50, n), min(100, n), n})
     out = {}
     for c in cuts:
-        out[str(c)] = personal_fit(games[-c:], ref, band)
+        sub = games[-c:]
+        out[str(c)] = personal_fit(sub, ref, band)
+        close = [g for g in sub if g["min"] >= CLOSE_MIN]
+        if len(close) >= MIN_PERSONAL:
+            out[f"{c}c"] = personal_fit(close, ref, band)
     return out, [str(c) for c in cuts]
 
 
@@ -261,7 +293,7 @@ def player_payload(pdir: Path, ref: dict, window: int = 0) -> dict | None:
         "meta": {"gamesOnDisk": profile.get("gamesStored"),
                  "requestedN": profile.get("requestedN"),
                  "historyExhausted": profile.get("historyExhausted"),
-                 "trimmedOlder": trimmed,
+                 "trimmedOlder": trimmed, "closeMin": CLOSE_MIN,
                  "rowsAfterFilters": int(len(df)),
                  "ddragon": cdn()["version"]},
     }
@@ -559,16 +591,26 @@ const SIGNS = {}; METS.forEach(m => SIGNS[m.key] = m.sign);
 const AX = Object.fromEntries(REF.axes.map(a => [a.key, a]));
 const AXLBL = Object.fromEntries(REF.axes.map(a => [a.key, a.label]));
 const MI = {}; MK.forEach((k, i) => MI[k] = i);
-const state = { baseline: P.bandAvailable ? 'band' : 'overall', role: 'ALL',
-                axis: 'C', w: Object.assign({}, DEF_W), custom: false,
-                win: (P.windows || []).slice(-1)[0] || String(P.nGames) };
 for (const k in REF.groups) REF.groups[k].__key = k;
+const state = { baseline: P.bandAvailable ? 'band' : 'overall', role: 'ALL',
+                axis: 'C', w: Object.assign({}, DEF_W), custom: false, close: false,
+                win: (P.windows || []).slice(-1)[0] || String(P.nGames) };
 
 // ---- recency window: deep history crosses patches and old ranks ----
+const CLOSE_MIN = (P.meta && P.meta.closeMin) || 32;
 const WINDOWS = P.windows || [String(P.nGames)];
-function windowGames() {
+function fitKey() { return state.win + (state.close ? 'c' : ''); }
+function pickFit(which) {
+  const byWin = P.personal[which] || {};
+  return byWin[fitKey()] || byWin[state.win] || null;
+}
+function hasCloseFit() {
+  return !!((P.personal[state.baseline] || {})[state.win + 'c']);
+}function windowGames() {
   const n = +state.win;
-  return n >= P.games.length ? P.games : P.games.slice(-n);
+  let gs = n >= P.games.length ? P.games : P.games.slice(-n);
+  if (state.close) gs = gs.filter(g => g.min >= CLOSE_MIN);
+  return gs;
 }
 function roleCounts() {
   const c = {};
@@ -764,7 +806,7 @@ function axisBtns() {
 }
 
 function modelPanel(rs) {
-  const per = (P.personal[state.baseline] || {})[state.win] || (P.personal.overall || {})[WINDOWS[WINDOWS.length - 1]] || null;
+  const per = pickFit(state.baseline) || pickFit('overall');
   const box = document.getElementById('modelPanel');
   if (!per || !per.axes) {
     box.innerHTML = '<div class="note">' + (per && per.unavailable ? per.unavailable
@@ -790,7 +832,8 @@ function modelPanel(rs) {
     'is <b>' + nf(ax.cosine, 2) + '</b> (1 = you win by doing exactly what your role wins by). ' +
     'Does each actually predict <i>your</i> wins? AUC on your ' + per.n + ' ' + per.role + ' games: ' +
     'published weights <b>' + nf(ax.aucPop, 3) + ' \u00b1' + nf(ax.aucPopSe, 3) + '</b>, ' +
-    'weights fitted to you, leave-one-out <b>' + nf(ax.aucMine, 3) + ' \u00b1' + nf(ax.aucMineSe, 3) + '</b>. ' +
+    'weights fitted to you, ' + (ax.cv || 'leave-one-out') + ' <b>' + nf(ax.aucMine, 3) +
+    ' \u00b1' + nf(ax.aucMineSe, 3) + '</b>. ' +
     (state.axis === 'equal' ? 'Here "published" means the neutral \u00b11 signs, which were never fitted to winning. ' : '') +
     (state.axis === 'A' ? 'Model A\u2019s AUC is inflated on your games for the same reason it is in the corpus: box scores re-encode stomps. ' : '') +
     'Read the gap against the \u00b1SE: with a few dozen games a personal edge usually is not distinguishable, and ' +
@@ -841,9 +884,29 @@ function windowBtns() {
     b.className = 'btn' + (state.win === wk ? ' on' : '');
     b.textContent = n >= total ? 'all ' + total : 'last ' + n;
     b.title = 'score only the most recent ' + (n >= total ? total : n) + ' games';
-    b.onclick = () => { state.win = wk; state.role = 'ALL'; render(); };
+    b.onclick = () => {
+      state.win = wk; state.role = 'ALL';
+      if (state.close && !((P.personal[state.baseline] || {})[wk + 'c'])) state.close = false;
+      render();
+    };
     box.appendChild(b);
   });
+  const t = document.createElement('button');
+  const wn = +state.win;
+  const base = wn >= P.games.length ? P.games : P.games.slice(-wn);
+  const closeCount = base.filter(g => g.min >= CLOSE_MIN).length;
+  t.className = 'btn' + (state.close ? ' on' : '');
+  t.textContent = state.close
+    ? 'close games only (\u2265' + CLOSE_MIN + 'm) \u00b7 ' + windowGames().length + ' games'
+    : 'all lengths \u00b7 ' + closeCount + ' games \u2265' + CLOSE_MIN + 'm';
+  t.title = 'Restrict to games \u2265 ' + CLOSE_MIN + ' minutes: analyze_rigor.py\u2019s stomp-robustness cut. ' +
+    'End-of-game stats partly re-encode winning, so short blowouts inflate every "you vs peers" number.';
+  t.onclick = () => { state.close = !state.close; state.role = 'ALL'; render(); };
+  if (!hasCloseFit()) {
+    t.disabled = true;
+    t.title = 'not enough games \u2265 ' + CLOSE_MIN + ' min in this window for a separate fit';
+  }
+  box.appendChild(t);
   const sp = windowSpan();
   document.getElementById('windowNote').innerHTML =
     'Window ' + sp.from + ' \u2192 ' + sp.to + ' \u00b7 ' + sp.patches.length +
@@ -998,8 +1061,9 @@ function drawOut(rs) {
   document.getElementById('outNote').innerHTML =
     'You beat your own teammates in <b>' + better + ' of ' + rs.length + '</b> games \u00b7 average differential ' +
     (avg(rs.map(r => r.df)) >= 0 ? '<b class="win">' : '<b class="lose">') + nf(avg(rs.map(r => r.df)), 2) +
-    '</b> SD \u00b7 shading/line are the ' + role + ' peer distribution. Under Model C the score <i>is</i> ' +
-    'this differential, so the score panel and this one agree by construction (' + axName + ').';
+    '</b> SD \u00b7 shading/line are the ' + role + ' peer distribution. ' +
+    (state.close ? 'Only games \u2265 ' + CLOSE_MIN + ' min are in view. ' : '') +
+    'Under Model C the score <i>is</i> this differential, so the two panels agree here by construction (' + axName + ').';
 }
 
 // ---------- tables ----------
@@ -1079,7 +1143,7 @@ function syncSliders() {
 
 function methodText() {
   const c = P.corpus, pr = P.profile;
-  const per = (P.personal[state.baseline] || {})[state.win] || null;
+  const per = pickFit(state.baseline);
   document.getElementById('method').innerHTML =
     '<b>Baseline.</b> Every metric is z-scored and percentiled against ' + c.nRows.toLocaleString() +
     ' player-games from ' + c.nMatches.toLocaleString() + ' ' + c.region +
@@ -1096,20 +1160,24 @@ function methodText() {
     'mid-rank (the same Mann-Whitney convention the AUC code uses), so a metric that is zero in most peer games does not ' +
     'report every tied game as 0%.<br>' +
     '<b>Your weights vs your role\u2019s.</b> The comparison refits a win model on your games alone, ridge-shrunk ' +
-    '(C=' + (per.ridgeC || 0.2) + ') and scored leave-one-out so it cannot grade data it saw, with bootstrap SEs. ' +
-    'With ' + per.n + ' games at ' + per.role + ', its coefficients are noisy by construction: the gap to the role model ' +
-    'is a hypothesis about how you differ, not a measurement. Rows in the slope table are the better-powered version ' +
-    '(one stat at a time, both sides with SEs).<br>' +
+    '(C=' + (per ? per.ridgeC : 0.2) + ') and scored out-of-sample (' + (per && per.axes ? (per.axes[state.axis] || {}).cv : 'leave-one-out') +
+    ') so it cannot grade data it saw, with bootstrap SEs. ' +
+    (per && per.n ? 'On ' + per.n + ' games at ' + per.role + ' its coefficients are noisy by construction: the gap to the ' +
+     'role model is a hypothesis about how you differ, not a measurement. ' : '') +
+    'Rows in the slope table are the better-powered version (one stat at a time, both sides with SEs).<br>' +
     '<b>Teammate differential.</b> Own score minus the mean of your teammates\u2019 scores (same baseline), so team strength ' +
     'cancels out; this is the within-team signal the project\u2019s Model C uses.<br>' +
     '<b>Caveats worth knowing.</b> (1) End-of-game box scores partly <i>re-encode</i> the win \u2014 stomps inflate everything, ' +
-    'so read the differential panel and the distribution, not just the win-rate tile. ' +
-    '(2) ' + P.nGames + ' games is a small sample: a \u00b15 percentile change is noise. ' +
+    'so the close-games-only window and the differential panel are the ones to trust. ' +
+    '(2) ' + windowGames().length + ' games are in view right now (' + P.span.patches.length +
+    ' patches across the full store): a \u00b15 percentile change is still noise, and widening the window mixes metas. ' +
     '(3) Your band is your <i>current</i> tier (' + (pr.soloRank ? pr.soloRank.tier + ' ' + pr.soloRank.division : 'unranked') +
-    ') applied to all games shown. ' + '(4) The corpus is ' + c.region + ' solo queue, so cross-region comparisons inherit ' +
-    c.region + '-specific playstyle. ' + '(5) Percentiles describe association with winning in the corpus, not causal carry value.' +
+    ') applied to every game shown, so games at a lower rank are scored against today\u2019s peers. ' +
+    '(4) The corpus is ' + c.region + ' solo queue, so cross-region comparisons inherit ' +
+    c.region + '-specific playstyle. ' + '(5) Percentiles and win-slopes describe association, not causal carry value: a stat ' +
+    'that rises in losing streaks will look \u201cbad\u201d without ever causing anything.' +
     '<br><b>Refresh.</b> <code>python collect_player.py "' + pr.riotId + '" --region ' + (pr.region || 'na1') +
-    '</code> then <code>python build_player_web.py --slug ' + P.slug + '</code>';
+    ' --n 500</code> then <code>python build_player_web.py --slug ' + P.slug + '</code>';
 }
 
 // ---------- render ----------
