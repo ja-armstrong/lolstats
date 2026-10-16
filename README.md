@@ -3,6 +3,11 @@
 > Two tracks now share one corpus. **(1)** The role-impact study, answered below.
 > **(2)** Single-player reports: look someone up by Riot ID (`Name#TAG`) and score their
 > games against the collected population — see [Single-player reports](#single-player-reports).
+>
+> A **coaching track** is in design: timeline-level behaviour claims priced on the cohort.
+> Its vocabulary is in [GLOSSARY.md](GLOSSARY.md), its decisions in
+> [docs/adr/](docs/adr/), and its pre-registered claim list in
+> [REGISTERED_QUESTIONS.md](REGISTERED_QUESTIONS.md). Nothing there is built yet.
 
 ## Question
 Build a normalized performance score for each role, see how accurately it

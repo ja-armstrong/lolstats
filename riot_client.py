@@ -185,6 +185,10 @@ PARTICIPANT_FIELDS = [
     "totalMinionsKilled", "neutralMinionsKilled", "goldEarned",
     "totalDamageDealtToChampions", "visionScore",
     "wardsPlaced", "wardsKilled",
+    # join key for the timeline layer: per-minute frames are keyed by participantId,
+    # and nothing else in the slim record identifies it (puuid identifies the player,
+    # participantId identifies the player *in that match*)
+    "participantId",
     # Riot ID fields as far as match-v5 discloses them: riotIdGameName comes back,
     # riotIdTagLine is masked to None for other players, and summonerName is now "".
     # Storing the game name still makes collected games half-addressable by name;
