@@ -132,10 +132,18 @@ python build_player_web.py                                  # -> web/players/<sl
 
 | Panel | Method, and why |
 |---|---|
-| Metric percentiles | Every metric is percentiled **per game, inside the role played in that game**, then averaged. A jungler's CS/min is never judged against ADC CS. Averaging per-game ranks rather than taking the percentile of the average stops one 25-0 stomp from carrying the number (the orange tick shows how far apart those two are). |
+| Metric percentiles | Every metric is percentiled **per game, inside the role played in that game**, then averaged. A jungler's CS/min is never judged against ADC CS. Averaging per-game ranks rather than taking the percentile of the average stops one 25-0 stomp from carrying the number (the orange tick shows how far apart those two are). Ties are given **mid-rank**, like the Mann-Whitney AUC code, because ~55% of peer games are tied at zero on stats such as solo kills — without it every tied game reads as 0%. |
 | Two baselines | *All ranks* = every corpus game for that role. *My band* = role x the player's rank band. Same player can read 56th percentile overall but 45th against Apex peers — rank matching is the whole point. |
-| Teammate differential | Own score minus the mean of your four teammates' scores on the same baseline, so team strength cancels out: the within-team estimand from Model C. |
-| Score weights | Sliders re-rank score, trend, distribution and differential live. Non-default weights read percentiles off the sampled baseline (~1% granularity). |
+| **Four weightings** | *Equal* (neutral signed mean), *Model A* (raw levels), *Model B* (team shares), *Model C* (within-team residuals) — the latter three fitted **per role** by logistic regression on the corpus, train/test split by match, and the button shows that role's held-out AUC. Default is C. A scores ~0.92 per role almost entirely because box scores re-encode stomps, so as a "how good were you" score it is the least honest of the four; B and C are the estimands the research track actually stands behind. |
+| Teammate differential | Own score minus the mean of your four teammates' scores on the same baseline. Under Model C this *is* the score (the residual axis), which is why the two panels agree there by construction. |
+| **Your weights vs your role's** | Refits a win model on the player's own games alone — ridge-shrunk (C=0.2) and scored **leave-one-out** so it cannot grade data it saw, with bootstrap SEs — then prints cosine similarity to the role's vector and both AUCs side by side. On 33 games the answer is usually "your own fit is worse", which is the honest result: 30-odd games cannot out-evaluate 19,000. |
+| **What you actually win with** | Per-metric univariate win logits (log-odds per SD) for the player vs the same number for their role x band peers, with both SEs and z = gap / combined SE. Better powered than the multivariate weights. Because 14 metrics are tested at once, the note flags |z| >= 2.9 (Bonferroni) rather than every |z| >= 2. |
+| Score weights | Sliders re-rank everything live. Touching one switches to *custom* mode, whose peer percentiles come off a sampled baseline (80-250 games per group), so they move by ~1-2%; the four published weightings use exact quantile grids. |
+
+Fitted per-role held-out AUCs on the 96k corpus, which double-check the research
+track's own rankings: **A** 0.91-0.94 (all roles, stomp-inflated), **B** TOP 0.56 / JUNGLE
+**0.66** / MID 0.54 / BOT 0.59 / SUP 0.60 (jungle leads, as published), **C** TOP 0.59 /
+JUNGLE 0.67 / MID 0.56 / BOT 0.58 / SUP **0.70** (support and jungle on top, as published).
 
 Stated limits: 40 games is a small sample (a 5-point percentile move is noise); the band is the
 player's **current** tier applied to all their games, so promotions score old games generously;

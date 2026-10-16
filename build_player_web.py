@@ -22,19 +22,29 @@ Output is plain static files (no backend, no API key anywhere in the page):
 """
 
 import argparse
+import collections
 import json
 import time
 from pathlib import Path
 
 import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
 
 from prepare_features import load_matches, METRICS
+from build_reference import AXES, SIGNS, band_of, univariate_logit
 
 ROOT = Path(__file__).resolve().parent
 PLAYER_DIR = ROOT / "data" / "players"
 REF_FILE = ROOT / "data" / "processed" / "reference.json"
 WEB_DIR = ROOT / "web"
 PLAYERS_OUT = WEB_DIR / "players"
+
+RIDGE_C = 0.2       # shrink hard: a fit on ~35 games is a contrast against the
+                    # population weights, not a model worth predicting with
+MIN_PERSONAL = 15   # games needed before a personal fit is reported at all
+AUC_BOOT = 400
+SEED = 42
 
 DDAGON_VERSIONS_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
 DDAGON_CHAMPS_URL = "https://ddragon.leagueoflegends.com/cdn/{v}/data/en_US/champion.json"
@@ -58,6 +68,93 @@ def cdn() -> dict:
             print(f"[cdn] ddragon unavailable ({type(e).__name__}); report renders without icons")
         _CDN.update({"version": version, "keys": keys})
     return _CDN
+
+
+def _group_for(ref: dict, role: str, band, use_band: bool):
+    if use_band and band:
+        g = ref["groups"].get(f"{role}|{band}")
+        if g:
+            return g, "band"
+    return ref["groups"][role], "overall"
+
+
+def _z_row(vals, grp: dict) -> list[float]:
+    return [(v - grp["m"][m]["mean"]) / grp["m"][m]["sd"] for m, v in zip(METRICS, vals)]
+
+
+def personal_fit(games: list[dict], ref: dict, band) -> dict:
+    """Fit this player's own win model, then set it against their role's weights.
+
+    Every number here is deliberately hedged, because ~35 games cannot carry a
+    free-fit model: coefficients are ridge-shrunk, accuracy is leave-one-out (so
+    the personal model is not graded on data it saw), each AUC gets a bootstrap SE,
+    and the univariate "win slope" comparison keeps both sides' SEs so a gap that
+    is indistinguishable from noise stays visibly one.
+    """
+    counts = collections.Counter(g["role"] for g in games)
+    role, n_role = counts.most_common(1)[0]
+    sub = [g for g in games if g["role"] == role]
+    y = np.array([1 if g["win"] else 0 for g in sub])
+    if n_role < MIN_PERSONAL or len(np.unique(y)) < 2:
+        return {"role": role, "n": int(n_role),
+                "unavailable": f"needs >= {MIN_PERSONAL} games in one role with both a win and a loss"}
+
+    grp, used = _group_for(ref, role, band, bool(band))
+    Z = np.array([_z_row(g["raw"], grp) for g in sub])
+    R = Z - np.array([_z_row(g["mate"], grp) for g in sub])   # own minus teammates' mean
+    rng = np.random.default_rng(SEED)
+
+    axes = {}
+    for ax, spec in AXES.items():
+        feats = spec["feats"]
+        idx = [METRICS.index(f) for f in feats]
+        X = (R if spec["kind"] == "residual" else Z)[:, idx]
+        w_pop = (np.array([SIGNS[f] for f in feats], float) if ax == "equal"
+                 else np.array([ref["presets"][ax][role]["w"].get(f, 0.0) for f in feats], float))
+        pop = X @ w_pop / len(feats)
+
+        loo = np.zeros(len(y))
+        for i in range(len(y)):
+            keep = np.ones(len(y), bool)
+            keep[i] = False
+            if len(np.unique(y[keep])) < 2:
+                loo[i] = pop[i]
+                continue
+            model = LogisticRegression(C=RIDGE_C, max_iter=2000).fit(X[keep], y[keep])
+            loo[i] = float(model.decision_function(X[i:i + 1])[0])
+        w_mine = LogisticRegression(C=RIDGE_C, max_iter=2000).fit(X, y).coef_[0]
+
+        auc_pop, auc_mine = float(roc_auc_score(y, pop)), float(roc_auc_score(y, loo))
+        b_pop, b_mine = [], []
+        for _ in range(AUC_BOOT):
+            k = rng.integers(0, len(y), len(y))
+            if len(np.unique(y[k])) < 2:
+                continue
+            b_pop.append(roc_auc_score(y[k], pop[k]))
+            b_mine.append(roc_auc_score(y[k], loo[k]))
+        n1, n2 = float(np.linalg.norm(w_mine)), float(np.linalg.norm(w_pop))
+        axes[ax] = {
+            "kind": spec["kind"], "nFeats": len(feats),
+            "aucPop": round(auc_pop, 3), "aucPopSe": round(float(np.std(b_pop)), 3),
+            "aucMine": round(auc_mine, 3), "aucMineSe": round(float(np.std(b_mine)), 3),
+            "wPop": {f: round(float(w), 3) for f, w in zip(feats, w_pop)},
+            "wMine": {f: round(float(w), 3) for f, w in zip(feats, w_mine)},
+            "cosine": round(float(np.dot(w_mine, w_pop) / (n1 * n2)), 3) if n1 > 1e-9 and n2 > 1e-9 else 0.0,
+        }
+
+    slopes = {}
+    for kind, mat in (("level", Z), ("residual", R)):
+        peer = grp["slope"][kind]
+        d = {}
+        for i, m in enumerate(METRICS):
+            b, se = univariate_logit(mat[:, i], y)
+            pb, pse = peer[m]
+            z = float((b - pb) / np.sqrt(se ** 2 + pse ** 2)) if se < 9 and pse < 9 else 0.0
+            d[m] = [round(float(b), 3), round(float(se), 3), round(pb, 3), round(pse, 3), round(z, 2)]
+        slopes[kind] = d
+
+    return {"role": role, "n": int(n_role), "nAll": len(games), "wins": int(y.sum()),
+            "baseline": used, "ridgeC": RIDGE_C, "axes": axes, "slopes": slopes}
 
 
 def player_payload(pdir: Path, ref: dict) -> dict | None:
@@ -131,6 +228,12 @@ def player_payload(pdir: Path, ref: dict) -> dict | None:
         "nWins": sum(1 for g in games if g["win"]),
         "roles": roles,
         "games": games,
+        # one personal fit per baseline, so flipping "my band / all ranks" never
+        # silently changes which peer group the comparison is against
+        "personal": {
+            "band": personal_fit(games, ref, band) if band_available else None,
+            "overall": personal_fit(games, ref, None),
+        },
         "corpus": {"nRows": ref["nRows"], "nMatches": ref["nMatches"],
                    "region": ref["region"], "generated": ref["generated"]},
         "meta": {"gamesOnDisk": profile.get("gamesStored"),
@@ -289,6 +392,21 @@ svg{display:block;width:100%}
 </header>
 <main>
   <div class="tiles" id="tiles"></div>
+  <div class="note" id="tilesNote" style="margin:-6px 0 14px"></div>
+
+  <div class="panel">
+    <h2>Scoring model</h2>
+    <div id="axisBtns"></div>
+    <div class="note" id="axisNote" style="margin-top:8px"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Your weights vs your role&rsquo;s weights</h2>
+    <div id="modelPanel"></div>
+    <div class="note" style="margin:10px 0 4px"><b>What you actually win with</b> (univariate, better powered than the fitted weights above)</div>
+    <div id="slopePanel" style="overflow-x:auto"></div>
+    <div class="note" id="slopeNote" style="margin-top:6px"></div>
+  </div>
 
   <div class="panel">
     <h2>Compared against</h2>
@@ -339,10 +457,11 @@ svg{display:block;width:100%}
 
   <div class="panel">
     <h2>Your score weights</h2>
-    <div class="note" style="margin-bottom:8px">Sliders re-rank everything above. At non-default weights the peer percentile is
-      read off a sampled baseline (120&ndash;400 peer games), so it moves by ~1%; the differential percentile stays on the
-      equal-weight peer scale.</div>
-    <div><button class="btn" id="resetW">Reset to equal weights</button></div>
+    <div class="note" style="margin-bottom:8px">Sliders re-rank everything above. Moving one switches you to
+      <b>custom</b> weights, whose peer percentiles come off a sampled peer baseline (80&ndash;250 games per group),
+      so they shift by ~1-2%. In model mode the sliders just display the fitted weights of the selected model.</div>
+    <div><button class="btn" id="resetW">Reset to the selected model</button>
+      <span class="note" id="weightsAreCustom"></span></div>
     <div id="weights"></div>
   </div>
 
@@ -395,10 +514,17 @@ const METS = REF.metrics, MK = METS.map(m => m.key);
 const DEF_W = {}; METS.forEach(m => DEF_W[m.key] = m.sign);
 const ROLE_COLORS = { TOP:'#4f9cf9', JUNGLE:'#e05656', MIDDLE:'#3fb96f', BOTTOM:'#f0a13a', SUPPORT:'#b07cf0' };
 const ROLE_ORDER = REF.roles;
-const state = { baseline: P.bandAvailable ? 'band' : 'overall', role: 'ALL', w: Object.assign({}, DEF_W) };
+
+// ---------- reference math, axes and per-role weights ----------
+const SIGNS = {}; METS.forEach(m => SIGNS[m.key] = m.sign);
+const AX = Object.fromEntries(REF.axes.map(a => [a.key, a]));
+const AXLBL = Object.fromEntries(REF.axes.map(a => [a.key, a.label]));
+const MI = {}; MK.forEach((k, i) => MI[k] = i);
+const HAS_PERSONAL = !!(P.personal && (P.personal.band || P.personal.overall));
+const state = { baseline: P.bandAvailable ? 'band' : 'overall', role: 'ALL',
+                axis: 'C', w: Object.assign({}, DEF_W), custom: false };
 for (const k in REF.groups) REF.groups[k].__key = k;
 
-// ---------- reference math ----------
 function groupFor(role) {
   if (state.baseline === 'band' && P.band) {
     const g = REF.groups[role + '|' + P.band];
@@ -417,51 +543,83 @@ function pct(q, v) {   // value -> percentile, interpolating the quantile grid
   const a = q[i - 1], b = q[i];
   return (i - 1) * step + (b > a ? step * (v - a) / (b - a) : 0);
 }
-function z(v, grp, k) { const s = grp.m[k]; return (v - s.mean) / s.sd; }
-function compOf(vals, grp) {
-  let s = 0, d = 0;
+// The role's own fitted coefficients (per role!), or +-1 signs for equal weight.
+function popW(axKey, role) {
+  const o = {};
+  if (axKey === 'equal' || !REF.presets || !REF.presets[axKey] || !REF.presets[axKey][role]) {
+    MK.forEach(k => o[k] = SIGNS[k]);
+    return o;
+  }
+  const w = REF.presets[axKey][role].w;
+  MK.forEach(k => o[k] = w[k] || 0);
+  return o;
+}
+function wNow(role) { return state.custom ? state.w : popW(state.axis, role); }
+function useResidual() { return AX[state.axis].kind === 'residual'; }
+
+// z against the peer group, and r = own minus the mean of your four teammates
+function prep(g) {
+  const grp = groupFor(g.role), w = wNow(g.role);
+  const zv = new Array(MK.length), rv = new Array(MK.length);
   for (let i = 0; i < MK.length; i++) {
-    const w = state.w[MK[i]]; if (!w) continue;
-    s += w * z(vals[i], grp, MK[i]); d += Math.abs(w);
+    const s = grp.m[MK[i]];
+    zv[i] = (g.raw[i] - s.mean) / s.sd;
+    rv[i] = zv[i] - (g.mate[i] - s.mean) / s.sd;
+  }
+  return { g, grp, w, z: zv, r: rv };
+}
+function dot(vecs, w, feats) {
+  let s = 0, d = 0;
+  for (const f of feats) {
+    const ww = w[f] || 0; if (!ww) continue;
+    s += ww * vecs[MI[f]]; d += Math.abs(ww);
   }
   return d ? s / d : 0;
 }
-function isDefaultW() { for (let i = 0; i < MK.length; i++) if (state.w[MK[i]] !== DEF_W[MK[i]]) return false; return true; }
-
-// peer percentile of a custom-weight composite, from the sampled baseline
+function scoreOf(p) {
+  return dot(useResidual() ? p.r : p.z, p.w, AX[state.axis].feats);
+}
+function diffOf(p) {                 // same weights, always on the residual axis
+  return dot(p.r, p.w, MK);
+}
+// Percentiles come from exact quantile grids for the four published weightings.
+// Custom sliders fall back to sampled peer rows (grp.z / grp.rz hold peer z-scores,
+// already standardized, so they are used as-is).
 const scache = new Map();
-function sampleComps(grp) {
-  const sig = grp.__key + '|' + MK.map(k => state.w[k]).join(',');
+function sampPct(grp, v, key) {
+  const sig = key + '|' + grp.__key + '|' + MK.map(k => state.w[k]).join(',');
   let a = scache.get(sig);
   if (!a) {
-    a = [];
-    for (const row of grp.z) {
+    a = (grp[key] || []).map(row => {
       let s = 0, d = 0;
       for (let i = 0; i < MK.length; i++) {
         const w = state.w[MK[i]]; if (!w) continue;
-        s += w * (row[i] / 100 - grp.m[MK[i]].mean) / grp.m[MK[i]].sd; d += Math.abs(w);
+        s += w * row[i] / 100; d += Math.abs(w);
       }
-      a.push(d ? s / d : 0);
-    }
+      return d ? s / d : 0;
+    });
     a.sort((x, y) => x - y); scache.set(sig, a);
   }
-  return a;
-}
-function sampPct(grp, v) {
-  const a = sampleComps(grp);
+  if (!a.length) return 50;
   let lo = 0, hi = a.length;
   while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] <= v) lo = m + 1; else hi = m; }
-  return a.length ? lo / a.length * 100 : 50;
+  return lo / a.length * 100;
 }
-function compPct(grp, v) { return isDefaultW() ? pct(grp.comp.q, v) : sampPct(grp, v); }
+function scorePct(p, v) {
+  return state.custom ? sampPct(p.grp, v, useResidual() ? 'rz' : 'z')
+                      : pct(p.grp.score[state.axis].q, v);
+}
+function diffPct(p, v) {
+  return state.custom ? sampPct(p.grp, v, 'rz') : pct(p.grp.diff[state.axis].q, v);
+}
 
 function rows() {
   let gs = P.games;
   if (state.role !== 'ALL') gs = gs.filter(g => g.role === state.role);
   return gs.map(g => {
-    const grp = groupFor(g.role);
-    const comp = compOf(g.raw, grp), mate = compOf(g.mate, grp);
-    return { g, grp, comp, out: comp - mate, cp: compPct(grp, comp), op: pct(grp.outperform.q, comp - mate) };
+    const p = prep(g);
+    const sc = scoreOf(p), df = diffOf(p);
+    return { g, grp: p.grp, w: p.w, sc, df, sp: scorePct(p, sc), dp: diffPct(p, df) };
   });
 }
 function avg(a) { return a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0; }
@@ -504,16 +662,111 @@ function header() {
 
 function tiles(rs) {
   const wins = rs.filter(r => r.g.win).length;
-  const top20 = rs.filter(r => r.cp >= 80).length;
+  const top20 = rs.filter(r => r.sp >= 80).length;
+  const lbl = state.custom ? 'custom weights' : AXLBL[state.axis];
   const items = [
     [rs.length, 'games in view'],
     [rs.length ? (wins / rs.length * 100).toFixed(1) + '%' : '-', 'win rate'],
-    [rs.length ? pc(avg(rs.map(r => r.cp))) : '-', 'score percentile vs peers'],
+    [rs.length ? pc(avg(rs.map(r => r.sp))) : '-', 'score percentile vs peers'],
     [rs.length ? (top20 / rs.length * 100).toFixed(0) + '%' : '-', 'games in peers\u2019 top 20%'],
-    [rs.length ? pc(avg(rs.map(r => r.op))) : '-', 'percentile vs own teammates'],
+    [rs.length ? pc(avg(rs.map(r => r.dp))) : '-', 'percentile vs own teammates'],
   ];
-  document.getElementById('tiles').innerHTML = items.map(([big, lbl]) =>
-    '<div class="tile"><div class="big">' + big + '</div><div class="lbl">' + lbl + '</div></div>').join('');
+  document.getElementById('tiles').innerHTML = items.map(([big, l]) =>
+    '<div class="tile"><div class="big">' + big + '</div><div class="lbl">' + l + '</div></div>').join('');
+  document.getElementById('tilesNote').textContent =
+    'Score = ' + lbl + (useResidual() ? ' on the vs-teammates (residual) axis' : ' on the box-score axis') +
+    (state.custom ? ' \u00b7 percentiles read off a sampled peer baseline' : ' \u00b7 percentiles from exact peer quantile grids');
+}
+
+// ---------- weighting: corpus role models vs your own fit ----------
+function axisBtns() {
+  const box = document.getElementById('axisBtns');
+  const role = (P.personal && P.personal.role) || majorityRole(rows()) || 'BOTTOM';
+  box.innerHTML = '';
+  REF.axes.forEach(a => {
+    const b = document.createElement('button');
+    b.className = 'btn' + (!state.custom && state.axis === a.key ? ' on' : '');
+    const auc = REF.fit && REF.fit.auc[a.key] ? REF.fit.auc[a.key][role] : null;
+    b.innerHTML = a.label + (auc ? '<br><span class="note">corpus AUC ' + auc.toFixed(2) + '</span>' : '');
+    b.title = a.feats.length + ' metrics, ' + a.kind + ' axis';
+    b.onclick = () => { state.custom = false; state.axis = a.key; scache.clear(); syncSliders(); render(); };
+    box.appendChild(b);
+  });
+  document.getElementById('axisNote').innerHTML =
+    '<b>Equal</b>: mean of the 14 signed z-scores, no fitting. <b>A</b>: raw box scores ' +
+    '(inflated by stomps \u2014 high AUC mostly because winning teams look dominant). ' +
+    '<b>B</b>: your share of team output. <b>C</b>: each stat\u2019s <i>within-team residual</i> ' +
+    '(yours minus your teammates\u2019 mean), which is the axis that asks how good <i>you</i> were. ' +
+    'All three model rows are fitted per role on ' + (REF.nRows || 0).toLocaleString() +
+    ' player-games, split by match, with the held-out AUC shown on the button for your role (' + role + ').';
+}
+
+function modelPanel(rs) {
+  const per = (P.personal && (P.personal[state.baseline] || P.personal.overall)) || null;
+  const box = document.getElementById('modelPanel');
+  if (!per || !per.axes) {
+    box.innerHTML = '<div class="note">' + (per && per.unavailable ? per.unavailable
+      : 'no personal fit available for this baseline') + '</div>';
+    document.getElementById('slopePanel').innerHTML = '';
+    document.getElementById('slopeNote').innerHTML = '';
+    return;
+  }
+  const ax = per.axes[state.axis] || per.axes.equal;
+  let html = '<table><tr><th>weighting</th><th>metric</th><th>your role\u2019s weight</th>' +
+    '<th>your weight (ridge, n=' + per.n + ')</th></tr>';
+  const feats = AX[state.axis].feats;
+  const rowsH = feats.map(f => [f, ax.wPop[f] || 0, ax.wMine[f] || 0])
+    .sort((a, b) => Math.abs(b[2] - b[1]) - Math.abs(a[2] - a[1]));
+  rowsH.forEach(([f, wp, wm]) => {
+    html += '<tr><td>' + AXLBL[state.axis] + '</td><td>' + LBL(f) + '</td>' +
+      '<td>' + (wp >= 0 ? '+' : '') + nf(wp, 2) + '</td>' +
+      '<td class="' + (Math.sign(wm) === Math.sign(wp) ? 'ok' : 'no') + '">' +
+      (wm >= 0 ? '+' : '') + nf(wm, 2) + '</td></tr>';
+  });
+  html += '</table>';
+  html += '<div class="note" style="margin-top:8px"><b>Same or different?</b> Cosine between the two vectors ' +
+    'is <b>' + nf(ax.cosine, 2) + '</b> (1 = you win by doing exactly what your role wins by). ' +
+    'Does each actually predict <i>your</i> wins? AUC on your ' + per.n + ' ' + per.role + ' games: ' +
+    'published weights <b>' + nf(ax.aucPop, 3) + ' \u00b1' + nf(ax.aucPopSe, 3) + '</b>, ' +
+    'weights fitted to you, leave-one-out <b>' + nf(ax.aucMine, 3) + ' \u00b1' + nf(ax.aucMineSe, 3) + '</b>. ' +
+    (state.axis === 'equal' ? 'Here "published" means the neutral \u00b11 signs, which were never fitted to winning. ' : '') +
+    (state.axis === 'A' ? 'Model A\u2019s AUC is inflated on your games for the same reason it is in the corpus: box scores re-encode stomps. ' : '') +
+    'Read the gap against the \u00b1SE: with a few dozen games a personal edge usually is not distinguishable, and ' +
+    'the population weights typically win because they saw ' + (REF.nRows || 0).toLocaleString() + ' games.</div>';
+  html += '<div style="margin-top:8px"><button class="btn" id="useMine">Score me with my own weights</button>' +
+    '<button class="btn" id="useRole">Back to role weights</button></div>';
+  box.innerHTML = html;
+  const um = document.getElementById('useMine'), ur = document.getElementById('useRole');
+  if (um) um.onclick = () => {
+    state.w = Object.assign({}, ax.wMine); state.custom = true; scache.clear(); syncSliders(); render();
+  };
+  if (ur) ur.onclick = () => {
+    state.custom = false; scache.clear(); syncSliders(); render();
+  };
+
+  // --- "what do you actually win with": univariate win slopes, you vs peers ---
+  const kind = useResidual() ? 'residual' : 'level';
+  const sl = per.slopes[kind], peer = groupFor(per.role).slope[kind];
+  let sh = '<table><tr><th>metric</th><th>you (logit / SD)</th><th>peers</th><th>difference</th></tr>';
+  const order = MK.slice().sort((a, b) => Math.abs(sl[b][4]) - Math.abs(sl[a][4]));
+  order.forEach(m => {
+    const [b, se, pb, pse, z] = sl[m];
+    const real = Math.abs(z) >= 2;
+    sh += '<tr><td>' + LBL(m) + '</td>' +
+      '<td>' + (b >= 0 ? '+' : '') + nf(b, 2) + ' <span class="note">\u00b1' + nf(se, 2) + '</span></td>' +
+      '<td>' + (pb >= 0 ? '+' : '') + nf(pb, 2) + ' <span class="note">\u00b1' + nf(pse, 2) + '</span></td>' +
+      '<td class="' + (real ? (z > 0 ? 'ok' : 'no') : '') + '">' + (real ? '<b>' : '') +
+      (z >= 0 ? '+' : '') + nf(z, 1) + ' SE' + (real ? '</b>' : '') + '</td></tr>';
+  });
+  sh += '</table>';
+  document.getElementById('slopePanel').innerHTML = sh;
+  document.getElementById('slopeNote').innerHTML =
+    'Reading: one extra SD of a stat raises your win odds by <i>you</i> (log-odds), versus <i>peers</i> at ' +
+    per.role + ' / ' + (P.band && state.baseline === 'band' ? P.band : 'all ranks').toUpperCase() +
+    '. This is the ' + kind + ' axis. The difference column is z = (you \u2212 peers) / combined SE. ' +
+    '<b>Multiplicity matters:</b> ' + MK.length + ' metrics are tested at once, so one or two |z| near 2 is exactly ' +
+    'what chance produces \u2014 |z| \u2265 2.9 is the level that survives a Bonferroni correction here. ' +
+    'Treat the ordering of rows as the hint, and any single bold row as a hypothesis to collect more games against.';
 }
 
 // ---------- baseline / role controls ----------
@@ -554,6 +807,8 @@ function roleBtns() {
     box.appendChild(b);
   });
 }
+
+const LBL = k => (METS.find(m => m.key === k) || { label: k }).label;
 
 // ---------- metric percentile bars ----------
 function metricBars(rs) {
@@ -612,14 +867,14 @@ function drawTrend(rs) {
   });
   const bw = (W - pad.l - pad.r) / n;
   rs.forEach((r, i) => {
-    const x = pad.l + i * bw, top = ys(r.cp), base = ys(0);
+    const x = pad.l + i * bw, top = ys(r.sp), base = ys(0);
     svg.appendChild(el('rect', { x: x + bw * 0.18, y: top, width: Math.max(1.5, bw * 0.64),
       height: Math.max(1, base - top), fill: r.g.win ? '#3fb96f' : '#e05656', opacity: .75 }));
   });
   const win = 5, pts = [];
   for (let i = 0; i < n; i++) {
     const s = rs.slice(Math.max(0, i - win + 1), i + 1);
-    pts.push([pad.l + i * bw + bw / 2, ys(avg(s.map(x => x.cp)))]);
+    pts.push([pad.l + i * bw + bw / 2, ys(avg(s.map(x => x.sp)))]);
   }
   svg.appendChild(el('polyline', { points: pts.map(p => p.join(',')).join(' '),
     fill: 'none', stroke: '#4f9cf9', 'stroke-width': 2 }));
@@ -650,12 +905,15 @@ function drawHist(id, vals, grp, grid) {
 }
 
 function drawOut(rs) {
-  drawHist('outChart', rs.map(r => r.out), groupFor(majorityRole(rs)), groupFor(majorityRole(rs)).outperform);
-  const better = rs.filter(r => r.out > 0).length;
+  const role = majorityRole(rs), grp = groupFor(role);
+  drawHist('outChart', rs.map(r => r.df), grp, state.custom ? grp.diff.equal : grp.diff[state.axis]);
+  const better = rs.filter(r => r.df > 0).length;
+  const axName = state.custom ? 'custom weights' : AXLBL[state.axis];
   document.getElementById('outNote').innerHTML =
-    'You outscored your own teammates in <b>' + better + ' of ' + rs.length + '</b> games \u00b7 average differential ' +
-    (avg(rs.map(r => r.out)) >= 0 ? '<b class="win">' : '<b class="lose">') + nf(avg(rs.map(r => r.out)), 2) + '</b> SD \u00b7 ' +
-    'median peer differential is 0 by construction.';
+    'You beat your own teammates in <b>' + better + ' of ' + rs.length + '</b> games \u00b7 average differential ' +
+    (avg(rs.map(r => r.df)) >= 0 ? '<b class="win">' : '<b class="lose">') + nf(avg(rs.map(r => r.df)), 2) +
+    '</b> SD \u00b7 shading/line are the ' + role + ' peer distribution. Under Model C the score <i>is</i> ' +
+    'this differential, so the score panel and this one agree by construction (' + axName + ').';
 }
 
 // ---------- tables ----------
@@ -663,7 +921,7 @@ function champTable(rs) {
   const by = {};
   rs.forEach(r => {
     const c = by[r.g.champ] || (by[r.g.champ] = { n: 0, w: 0, cp: 0, role: r.g.role, key: r.g.champKey });
-    c.n++; c.w += r.g.win ? 1 : 0; c.cp += r.cp;
+    c.n++; c.w += r.g.win ? 1 : 0; c.cp += r.sp;
   });
   const list = Object.entries(by).sort((a, b) => b[1].n - a[1].n).slice(0, 14);
   const cdn = P.meta.ddragon;
@@ -688,7 +946,7 @@ function gameTable(rs) {
       '</td><td class="' + (g.win ? 'win">W' : 'lose">L') + '</td><td>' + g.k + '/' + g.d + '/' + g.a + '</td>' +
       '<td>' + nf(g.raw[i('csm')], 1) + '</td><td>' + Math.round(g.raw[i('dpm')]).toLocaleString() + '</td>' +
       '<td>' + nf(g.raw[i('vspm')], 1) + '</td><td>' + Math.round(g.raw[i('gpm')]).toLocaleString() + '</td>' +
-      '<td>' + pc(r.cp) + '</td><td>' + (r.out >= 0 ? '<span class="win">+' : '<span class="lose">') + nf(r.out, 2) + '</span></td></tr>';
+      '<td>' + pc(r.sp) + '</td><td>' + (r.df >= 0 ? '<span class="win">+' : '<span class="lose">') + nf(r.df, 2) + '</span></td></tr>';
   });
   document.getElementById('gameTable').innerHTML = html + '</table>';
 }
@@ -708,33 +966,54 @@ function weightsBox() {
     inp.dataset.key = m.key;
     inp.oninput = () => {
       state.w[m.key] = +inp.value; val.textContent = (+inp.value).toFixed(1);
+      state.custom = true;                 // leaving the published weightings
       scache.clear(); render();
     };
     box.appendChild(row);
   });
   document.getElementById('resetW').onclick = () => {
-    METS.forEach(m => state.w[m.key] = m.sign); scache.clear(); syncSliders(); render();
+    state.custom = false;
+    state.w = popW(state.axis, majorityRole(rows()) || ROLE_ORDER[0]);
+    scache.clear(); syncSliders(); render();
   };
 }
 function syncSliders() {
+  // in preset mode the sliders just show the fitted weights for the role in view
+  if (!state.custom) state.w = popW(state.axis, majorityRole(rows()) || ROLE_ORDER[0]);
+  const scale = state.custom ? 1 : 1;
   document.querySelectorAll('#weights input').forEach(inp => {
-    inp.value = state.w[inp.dataset.key];
-    inp.parentElement.querySelector('.val').textContent = (+state.w[inp.dataset.key]).toFixed(1);
+    const k = inp.dataset.key, v = (state.w[k] || 0);
+    inp.value = Math.max(-3, Math.min(3, v * scale));
+    inp.parentElement.querySelector('.val').textContent = (+v).toFixed(2);
   });
+  document.getElementById('weightsAreCustom').textContent = state.custom
+    ? 'custom weights (not a published model)'
+    : 'showing ' + AXLBL[state.axis] + ' for ' + (majorityRole(rows()) || 'your main role');
 }
 
 function methodText() {
   const c = P.corpus, pr = P.profile;
+  const per = (P.personal && (P.personal[state.baseline] || P.personal.overall)) || null;
   document.getElementById('method').innerHTML =
     '<b>Baseline.</b> Every metric is z-scored and percentiled against ' + c.nRows.toLocaleString() +
     ' player-games from ' + c.nMatches.toLocaleString() + ' ' + c.region +
     ' ranked solo queue games (collected via the Riot API, baseline frozen ' + c.generated.slice(0, 10) + '). ' +
     'Two baselines are offered: all ranks for your role, and your rank band \u00d7 role. ' +
     'Values are trimmed to the corpus 0.1%/99.9% range before scoring.<br>' +
-    '<b>Score.</b> Equal-weight mean of the 14 signed z-scores (deaths and death share count negatively). ' +
-    'Percentiles are computed per game inside the role played in that game, then averaged \u2014 averaging raw stats first ' +
-    'would let one 25-0 stomp dominate the result. Ties are given mid-rank (the same Mann-Whitney convention the ' +
-    'AUC code uses), so a metric that is zero in most peer games does not report every tied game as 0%.<br>' +
+    '<b>Score &amp; weightings.</b> The selected model multiplies each metric by a weight and averages over ' +
+    'available metrics. <i>Equal</i> is the neutral signed mean. <i>A/B/C</i> are logistic win models fitted ' +
+    '<b>per role</b> on ' + c.nRows.toLocaleString() + ' player-games, train/test split by match, and the button shows ' +
+    'each one\u2019s held-out AUC for your role. A reads high (~0.9) mostly because box scores re-encode stomps; B ' +
+    '(shares of team output) and C (within-team residuals) are the honest estimands, and C is the one that asks how good ' +
+    '<i>you</i> were rather than how good your team looked. Percentiles are computed per game inside the role played in ' +
+    'that game, then averaged \u2014 averaging raw stats first would let one 25-0 stomp dominate the result. Ties are given ' +
+    'mid-rank (the same Mann-Whitney convention the AUC code uses), so a metric that is zero in most peer games does not ' +
+    'report every tied game as 0%.<br>' +
+    '<b>Your weights vs your role\u2019s.</b> The comparison refits a win model on your games alone, ridge-shrunk ' +
+    '(C=' + (per.ridgeC || 0.2) + ') and scored leave-one-out so it cannot grade data it saw, with bootstrap SEs. ' +
+    'With ' + per.n + ' games at ' + per.role + ', its coefficients are noisy by construction: the gap to the role model ' +
+    'is a hypothesis about how you differ, not a measurement. Rows in the slope table are the better-powered version ' +
+    '(one stat at a time, both sides with SEs).<br>' +
     '<b>Teammate differential.</b> Own score minus the mean of your teammates\u2019 scores (same baseline), so team strength ' +
     'cancels out; this is the within-team signal the project\u2019s Model C uses.<br>' +
     '<b>Caveats worth knowing.</b> (1) End-of-game box scores partly <i>re-encode</i> the win \u2014 stomps inflate everything, ' +
@@ -751,8 +1030,9 @@ function methodText() {
 let tm = null;
 function render() {
   const rs = rows();
-  baselineBtns(); roleBtns(); weightsBox();
+  axisBtns(); baselineBtns(); roleBtns(); weightsBox(); syncSliders();
   tiles(rs);
+  modelPanel(rs);
   if (!rs.length) {
     ['trend', 'hist', 'outChart'].forEach(id => clear(document.getElementById(id)));
     document.getElementById('metricBars').innerHTML = '<div class="note">no games in this filter</div>';
@@ -762,7 +1042,7 @@ function render() {
   metricBars(rs);
   drawTrend(rs);
   const grp = groupFor(majorityRole(rs));
-  drawHist('hist', rs.map(r => r.comp), grp, grp.comp);
+  drawHist('hist', rs.map(r => r.sc), grp, state.custom ? grp.score.equal : grp.score[state.axis]);
   drawOut(rs);
   champTable(rs);
   gameTable(rs);
